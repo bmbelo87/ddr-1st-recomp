@@ -79,10 +79,15 @@ python psxrecomp/psxrecomp_cli.py generate \
   --config game.toml --project-root . \
   --disc "game/Dance Dance Revolution (Japan).cue"
 
-# 5. Build
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+# 5. Build. Go through the CLI: clang and ninja live in a pinned toolchain
+#    cache, not on PATH, and the CLI resolves (or downloads) them for you.
+python psxrecomp/psxrecomp_cli.py rebuild \
+  --config game.toml --project-root . --build-dir build \
+  --target ddr-1st-recomp
 ```
+
+A plain `cmake -S . -B build -G Ninja` works too, but only if clang and ninja
+are already on your PATH.
 
 The executable lands in `build/`. `build/run.sh` wraps the whole loop — it
 rebuilds first, aborts if the build fails (so you never test a stale binary),

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DDRecomplution)
+project(ddr-1st-recomp)
 
 # PSXRecomp lives in the psxrecomp/ submodule. A sibling checkout still works
 # as a fallback, for anyone who keeps one framework tree across several games.
@@ -25,7 +25,7 @@ file(GLOB GAME_FULL CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/generated/*_full_*.c")
 file(GLOB GAME_DISPATCH "${CMAKE_CURRENT_SOURCE_DIR}/generated/*_dispatch.c")
 
-psxrecomp_add_runtime_target(DDRecomplution
+psxrecomp_add_runtime_target(ddr-1st-recomp
     GAME_GENERATED_FULL_C     ${GAME_FULL}
     GAME_GENERATED_DISPATCH_C "${GAME_DISPATCH}"
     WINDOW_TITLE              "Dance Dance Revolution 1st Mix Recompiled"
