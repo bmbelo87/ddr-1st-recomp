@@ -1,0 +1,28 @@
+# Dance Dance Revolution 1st Mix (Japan) — SLPM-86222
+# PSXRecomp static recompilation config
+
+[game]
+name        = "Dance Dance Revolution"
+id          = "SLPM-86222"
+exe         = "SLPM_862.22"
+disc        = "game/Dance Dance Revolution (Japan).cue"
+load_address = "0x80016000"
+entry_pc    = "0x8001BA20"
+text_size   = "0x00148800"
+
+[recompiler]
+seeds   = "recompiler/seeds/seeds.txt"
+out_dir = "generated"
+strict  = false
+
+[audio]
+# Output cushion = input-to-sound latency. DDR syncs arrows to CDDA, so keep it
+# low; the framework default (180) puts the music ~audibly behind the chart.
+# Raise toward 80-100 only if audio crackles.
+buffer_ms = 60
+
+[runtime]
+window_title = "Dance Dance Revolution 1st Mix"
+
+[controller]
+multitap_analog = false

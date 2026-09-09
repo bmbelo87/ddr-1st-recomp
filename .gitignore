@@ -1,0 +1,55 @@
+# ─── Material do jogo: nunca versionado ──────────────────────────────────────
+# O executavel e as faixas do CD sao obra protegida da Konami. Quem clonar usa
+# o proprio dump legal; o game.toml aponta para estes caminhos relativos e o
+# recompilador cuida do resto.
+/SLPM_862.22
+/game/
+/game_extract/
+
+# ─── Codigo gerado pelo recompilador ─────────────────────────────────────────
+# ~154 MB de C traduzido instrucao a instrucao do executavel acima. Versionar
+# isso seria redistribuir o jogo em outra forma, e de todo modo e reproduzivel:
+# roda-se o recompilador sobre o dump do proprio usuario.
+/generated/
+
+# ─── Saidas de build ─────────────────────────────────────────────────────────
+# O diretorio inteiro sai, menos o script de execucao, que e fonte.
+/build/*
+!/build/run.sh
+
+# O settings.toml e escrito pelo launcher e guarda caminhos absolutos da
+# maquina (inclusive o nome de usuario). Cada um gera o seu no primeiro boot.
+build/settings.toml
+
+# Memory cards e configuracao de controle: estado do jogador, nao do projeto.
+*.mcd
+build/disc.cfg
+build/bios.cfg
+build/input.ini
+build/keybinds.ini
+
+# ─── Diagnostico ─────────────────────────────────────────────────────────────
+# Tudo que as sondas cospem. Util enquanto se investiga, inutil no repositorio.
+logs/
+*.log
+psx_last_run_report.json
+psx_freeze_heartbeat.json
+psx_freeze_dump_*.json
+freeze_probe.txt
+dump.txt
+cdtrace.txt
+padtrace.txt
+otc*.txt
+otcheck*.txt
+model.txt
+nodancer*.txt
+vram_*.bmp
+*.bmp
+
+# ─── Sistema operacional / editores ──────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp

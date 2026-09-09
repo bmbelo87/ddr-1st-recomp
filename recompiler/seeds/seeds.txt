@@ -1,0 +1,3 @@
+# DDR 1st Mix JP — seed functions for static recompilation
+# entry point do executável
+0x8001BA20
