@@ -24,6 +24,29 @@
 #
 # PSX_SETUP_WIZARD is not optional with FORCE_SETUP_HOST: without it the zip
 # opens to nothing, because there is no wizard to ask for the disc.
+#
+# Three things the packaging tools need on PATH / in the environment, none of
+# which they can find on their own under MSYS2. Each one stops the run with a
+# message that names the missing piece but not where to get it:
+#
+#   python   The tools probe for `python3` and `python`; MSYS2 users have `py`.
+#              PYDIR=$(dirname "$(py -c 'import sys; print(sys.executable)' \
+#                | tr -d '\r' | sed 's|\\|/|g; s|^\([A-Za-z]\):|/\L\1|')")
+#              export PATH="$PYDIR:$PATH"
+#
+#   objdump  Used to work out which DLLs the emitters need. `pacman -S binutils`.
+#
+#   PSXRECOMP_RUNTIME_BIN_DIR
+#            Where those DLLs live. The emitters link against the clang
+#            toolchain's libc++.dll / libunwind.dll, and the default search path
+#            is a MinGW location that does not exist here:
+#              export PSXRECOMP_RUNTIME_BIN_DIR=\
+#                "$HOME/.local/share/retcomm/toolchains/cmake-clang-v1/latest/bin"
+#            (that is the WINDOWS home; under MSYS2 spell it /c/users/<you>/...)
+#
+# The DLLs ship beside psxrecomp-game.exe in the zip. They are not the game's
+# dependency -- they belong to the tool that builds the game on the player's
+# machine.
 set -euo pipefail
 
 BUILD_DIR="${1:?usage: $0 <build-dir> <artifact> [recompiler-build]}"

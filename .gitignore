@@ -17,6 +17,8 @@
 # ─── Saidas de build ─────────────────────────────────────────────────────────
 # O diretorio inteiro sai, menos o script de execucao, que e fonte.
 /build/*
+/build-ci/
+/dist/
 !/build/run.sh
 
 # O settings.toml e escrito pelo launcher e guarda caminhos absolutos da
@@ -55,3 +57,5 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+/build-ci
+/dist

@@ -1,13 +1,21 @@
 cmake_minimum_required(VERSION 3.20)
 project(ddr-1st-recomp)
 
-# PSXRecomp lives in the psxrecomp/ submodule. A sibling checkout still works
-# as a fallback, for anyone who keeps one framework tree across several games.
+# PSXRecomp is the psxrecomp/ submodule.
+#
+# The if(EXISTS ...) is load-bearing for packaging, not just style. The
+# setup-host packager greps this file for paths and demands they be inside the
+# zip, EXCEPT the ones an if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/...") guards.
+# A "../psxrecomp" fallback here is a path outside the zip and is refused; and
+# removing the guard altogether is worse, because the packager's grep then
+# matches nothing, exits 1 under pipefail, and kills the run with no message.
+# So: one guarded reference to the submodule, and nothing else.
+#
+# Anyone keeping one framework tree across several games passes
+# -DPSXRECOMP_ROOT, which skips this block entirely.
 if(NOT DEFINED PSXRECOMP_ROOT)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp/runtime/runtime.cmake")
         get_filename_component(PSXRECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp" ABSOLUTE)
-    else()
-        get_filename_component(PSXRECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../psxrecomp" ABSOLUTE)
     endif()
 endif()
 
