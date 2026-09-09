@@ -36,7 +36,7 @@ Everything is in place after a recursive clone — PSXRecomp and recomp-ui are
 submodules, pinned to the exact commits this build was made with:
 
 ```
-ddr-1st-mix-recomp/
+ddr-1st-recomp/
 ├── game.toml            identity, load address, entry PC, seeds
 ├── CMakeLists.txt
 ├── psxrecomp/           submodule — the framework, with the DDR fixes
@@ -60,8 +60,8 @@ overrides both.
 
 ```bash
 # 1. Clone with submodules — this brings the framework and the UI with it
-git clone --recurse-submodules <this-repo> ddr-1st-mix-recomp
-cd ddr-1st-mix-recomp
+git clone --recurse-submodules https://github.com/bmbelo87/ddr-1st-recomp.git
+cd ddr-1st-recomp
 
 #    Already cloned without --recurse-submodules?
 #      git submodule update --init --recursive
