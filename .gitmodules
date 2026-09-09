@@ -2,3 +2,7 @@
 	path = recomp-ui
 	url = https://github.com/mstan/recomp-ui.git
 	branch = master
+[submodule "psxrecomp"]
+	path = psxrecomp
+	url = https://github.com/bmbelo87/psxrecomp.git
+	branch = ddr-1st-mix

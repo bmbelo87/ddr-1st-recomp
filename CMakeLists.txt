@@ -1,14 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
 project(DDRecomplution)
 
+# PSXRecomp lives in the psxrecomp/ submodule. A sibling checkout still works
+# as a fallback, for anyone who keeps one framework tree across several games.
 if(NOT DEFINED PSXRECOMP_ROOT)
-    get_filename_component(PSXRECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../psxrecomp" ABSOLUTE)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp/runtime/runtime.cmake")
+        get_filename_component(PSXRECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/psxrecomp" ABSOLUTE)
+    else()
+        get_filename_component(PSXRECOMP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../psxrecomp" ABSOLUTE)
+    endif()
 endif()
 
 if(NOT EXISTS "${PSXRECOMP_ROOT}/runtime/runtime.cmake")
     message(FATAL_ERROR
         "PSXRecomp runtime is missing: ${PSXRECOMP_ROOT}/runtime/runtime.cmake\n"
-        "Set -DPSXRECOMP_ROOT=<path> or place psxrecomp next to DDRecomplution.")
+        "The submodule is probably not checked out. Run:\n"
+        "    git submodule update --init --recursive\n"
+        "Or set -DPSXRECOMP_ROOT=<path> to point at your own checkout.")
 endif()
 
 include("${PSXRECOMP_ROOT}/runtime/runtime.cmake")

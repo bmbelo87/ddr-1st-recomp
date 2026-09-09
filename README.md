@@ -32,27 +32,39 @@ A different revision may still work, but the recompiled addresses in
 
 ## Layout
 
-PSXRecomp is expected **next to** this repository, not inside it:
+Everything is in place after a recursive clone — PSXRecomp and recomp-ui are
+submodules, pinned to the exact commits this build was made with:
 
 ```
-some-directory/
-├── psxrecomp/          <- the framework
-└── DDRecomplution/     <- this repo
-    ├── game/           <- your dump goes here (gitignored)
-    ├── SLPM_862.22     <- boot executable, extracted from the disc (gitignored)
-    └── generated/      <- produced by the recompiler (gitignored)
+ddr-1st-mix-recomp/
+├── game.toml            identity, load address, entry PC, seeds
+├── CMakeLists.txt
+├── psxrecomp/           submodule — the framework, with the DDR fixes
+├── recomp-ui/           submodule — launcher UI
+├── game/                your dump goes here          (gitignored)
+├── SLPM_862.22          boot executable from the disc (gitignored)
+└── generated/           produced by the recompiler    (gitignored)
 ```
 
-If you keep PSXRecomp somewhere else, pass `-DPSXRECOMP_ROOT=<path>` when you
-configure CMake.
+The framework is pinned deliberately. The fixes that make this game boot and
+run — the CD DMA overread, the CDDA position compensation, the freeze
+containment — live in the framework's runtime, not in this repository. Pointing
+at upstream PSXRecomp instead would give you a build that hangs on the warning
+screen before its first frame.
+
+If you already keep one framework checkout shared across several games, a
+sibling `../psxrecomp` directory is still honoured, and `-DPSXRECOMP_ROOT=<path>`
+overrides both.
 
 ## Build
 
 ```bash
-# 1. Clone both, with submodules (recomp-ui is one)
-git clone --recurse-submodules https://github.com/mstan/psxrecomp.git
-git clone --recurse-submodules <this-repo> DDRecomplution
-cd DDRecomplution
+# 1. Clone with submodules — this brings the framework and the UI with it
+git clone --recurse-submodules <this-repo> ddr-1st-mix-recomp
+cd ddr-1st-mix-recomp
+
+#    Already cloned without --recurse-submodules?
+#      git submodule update --init --recursive
 
 # 2. Put your dump in game/ — the .cue and all 40 .bin tracks.
 #    game.toml expects this exact name:
@@ -63,7 +75,7 @@ cd DDRecomplution
 #    binmerge, a disc image mounter). game.toml reads it as `exe`.
 
 # 4. Translate the game to C  (~150 MB into generated/, takes a while)
-python ../psxrecomp/psxrecomp_cli.py generate \
+python psxrecomp/psxrecomp_cli.py generate \
   --config game.toml --project-root . \
   --disc "game/Dance Dance Revolution (Japan).cue"
 
