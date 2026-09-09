@@ -1,0 +1,46 @@
+{
+  "format_version": 1,
+  "game": {
+    "name": "Dance Dance Revolution 1st Mix",
+    "id": "SLPM-86222",
+    "boot_exe": "SLPM_862.22"
+  },
+  "marketing": {
+    "description": "The first Dance Dance Revolution, recompiled to a native executable.",
+    "publisher": "Konami",
+    "year": "1998",
+    "region": "Japan",
+    "players": 2
+  },
+  "rom_identity": {
+    "cue_name": "Dance Dance Revolution (Japan).cue",
+    "bin_name": "Dance Dance Revolution (Japan) (Track 01).bin",
+    "track_counts": [
+      40
+    ],
+    "require_cue": true,
+    "data_track": {
+      "size": 14935200,
+      "md5": "57d6ae6568a77409abfc94ba1d695b62",
+      "sha1": "03605ce9b3fea0f3455961577f815f2f47094a52",
+      "crc32": "74c201cf"
+    },
+    "disc_fp": "a1166485800a37bcba8d629c25fd86411e007af3fa5e08eb9af526fbee35aa55"
+  },
+  "exe": {
+    "load_address": "0x80016000",
+    "entry_pc": "0x8001BA20",
+    "text_size": "0x00148800",
+    "stack_base": "0x801FFFF0"
+  },
+  "seeds": {
+    "count": 949,
+    "source": "boot_exe_jal"
+  },
+  "warnings": [],
+  "notes": [
+    "entry_pc/load_address/text_size/stack_base taken from PS-X EXE header.",
+    "seeds are first-pass boot-EXE JAL targets (+ entry); expect to grow as overlays / runtime paths are discovered.",
+    "required_disc_fp is psxrecomp-toc-v1 (matches runtime DiscIdentity)."
+  ]
+}

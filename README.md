@@ -153,6 +153,40 @@ head -30 build/run.sh
 
 ---
 
+## Releases
+
+A release here is **not** a playable download, and cannot be: the built
+executable contains ~150 MB of C translated instruction by instruction from
+Konami's boot executable. Shipping it would be shipping the game.
+
+What ships instead is a **setup-host** zip, the model the PSXRecomp ecosystem
+uses: the player downloads it, runs it, points it at their own legal disc, and
+it generates and compiles on their machine. First run takes minutes; every run
+after that starts immediately. Nothing in the download is Konami's.
+
+The framework provides the machinery:
+
+| | |
+| --- | --- |
+| `psxrecomp/tools/package_setup_host.sh` | builds the zip |
+| `psxrecomp/docs/ci/templates/setup-release.yml` | GitHub Actions workflow, publishes on tag |
+| `psxrecomp/docs/ci/HOST_ONLY_RELEASES.md` | what CI does, step by step |
+
+Ready here:
+
+- `[prepare_disc]` digests and `disc_crc` in `game.toml`, so a wrong dump is
+  refused instead of silently producing garbage
+- `catalog_identity.json` — identity, marketing metadata, TOC fingerprint
+- `VERSION` + the CMake wiring that stamps it into the binary (the packager
+  refuses to ship if the stamp and the release version disagree)
+
+**Not ready — this blocks a release:** the hooks still live behind
+`PSX_DEBUG_TOOLS`, and a setup-host builds in release mode. Ship today and the
+player gets a game that freezes mid-song. See the section above; the port to
+`psx_mod_function_entry` is the one remaining piece.
+
+---
+
 ## State of this build
 
 Working: boot, correct animation speed, audio and arrows in sync, no OpenBIOS

@@ -19,6 +19,14 @@ if(NOT EXISTS "${PSXRECOMP_ROOT}/runtime/runtime.cmake")
         "Or set -DPSXRECOMP_ROOT=<path> to point at your own checkout.")
 endif()
 
+# Release version. The runtime stamps this into the binary and writes
+# psx_game_version.txt beside it; package_setup_host.sh refuses to ship a zip
+# whose version disagrees with that stamp, so VERSION is the single source.
+# Without this the stamp is the literal string "dev" and packaging fails.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" PSX_GAME_VERSION LIMIT_COUNT 1)
+string(STRIP "${PSX_GAME_VERSION}" PSX_GAME_VERSION)
+message(STATUS "ddr-1st-recomp: version ${PSX_GAME_VERSION}")
+
 include("${PSXRECOMP_ROOT}/runtime/runtime.cmake")
 
 file(GLOB GAME_FULL CONFIGURE_DEPENDS

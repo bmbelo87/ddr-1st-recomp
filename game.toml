@@ -1,18 +1,53 @@
 # Dance Dance Revolution 1st Mix (Japan) — SLPM-86222
 # PSXRecomp static recompilation config
+#
+# Identity, digests and TOC fingerprint below were produced by
+# psxrecomp/tools/new_project_layout/probe_disc.py from a legal dump.
 
 [game]
-name        = "Dance Dance Revolution"
+name        = "Dance Dance Revolution 1st Mix"
 id          = "SLPM-86222"
-exe         = "SLPM_862.22"
-disc        = "game/Dance Dance Revolution (Japan).cue"
+players     = 2
+exe         = "disc/SLPM_862.22"
+# No `disc` key on purpose. It would hold an absolute path to one machine's
+# dump, which is both unshippable and untestable: with it set, this machine
+# never exercises the path every other player takes. The disc comes from the
+# player -- the launcher asks on first run and remembers the answer; `--disc`
+# still overrides for scripted / headless runs, which have no picker.
+#
+# disc_crc is the data track's CRC32 (IEEE), the same digest DiscIdentity
+# computes. This is the gate that refuses a dump this build was not
+# recompiled from. Matches [prepare_disc] known_crc32 below.
+disc_crc     = "74C201CF"
 load_address = "0x80016000"
-entry_pc    = "0x8001BA20"
-text_size   = "0x00148800"
+entry_pc     = "0x8001BA20"
+text_size    = "0x00148800"
+stack_base   = "0x801FFFF0"
+
+# Digests are for data Track 01 (first BINARY FILE / TRACK 01).
+[prepare_disc]
+out_dir    = "disc"
+bin_name   = "Dance Dance Revolution (Japan) (Track 01).bin"
+cue_name   = "Dance Dance Revolution (Japan).cue"
+boot_exe   = "SLPM_862.22"
+known_sizes = [14935200]
+known_md5 = [
+  "57d6ae6568a77409abfc94ba1d695b62",
+]
+known_sha1 = [
+  "03605ce9b3fea0f3455961577f815f2f47094a52",
+]
+known_crc32 = [
+  "74c201cf",
+]
 
 [recompiler]
 seeds   = "recompiler/seeds/seeds.txt"
 out_dir = "generated"
+# strict = false: bring-up found call sites the seed list does not reach yet.
+# The probe reports 949 first-pass JAL seeds against the 1 we ship; adopting
+# them changes what is generated, so it is a deliberate, separately tested
+# step rather than a config tweak.
 strict  = false
 
 [audio]
@@ -26,3 +61,9 @@ window_title = "Dance Dance Revolution 1st Mix"
 
 [controller]
 multitap_analog = false
+
+# Online mount gate: digests + track count + TOC fingerprint.
+[netplay]
+require_cue      = true
+required_tracks  = 40
+required_disc_fp = "a1166485800a37bcba8d629c25fd86411e007af3fa5e08eb9af526fbee35aa55"

@@ -5,6 +5,8 @@
 /SLPM_862.22
 /game/
 /game_extract/
+# prepare_disc stages the player's dump here.
+/disc/
 
 # ─── Codigo gerado pelo recompilador ─────────────────────────────────────────
 # ~154 MB de C traduzido instrucao a instrucao do executavel acima. Versionar
