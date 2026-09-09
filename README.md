@@ -89,6 +89,25 @@ python psxrecomp/psxrecomp_cli.py rebuild \
 A plain `cmake -S . -B build -G Ninja` works too, but only if clang and ninja
 are already on your PATH.
 
+### `-DPSX_DEBUG_TOOLS=ON` is required, for now
+
+Without it the link fails with `undefined symbol: psx_model_available`, and the
+message gives no hint why.
+
+The reason matters: everything this project adds to the game — the extended
+mode-select menu, the unlock mask, and the containment that stops the
+mid-song/credits freeze — is currently attached to
+`debug_server_log_call_entry`, which the framework compiles out of a release
+build (`PSX_NO_DEBUG_TOOLS`). So a default Release build does not merely lose
+the menu: it hangs the way the game did before any of this work.
+
+The supported fix is `psx_mod_function_entry` (`runtime/include/mod_plugins.h`),
+the hook that survives a release build, driven by `mod_function_entry_funcs` in
+`game.toml`. Porting means listing the hooked addresses there — 0x8004A380,
+0x80049F9C, 0x80020D30, 0x80022268, 0x8007259C, 0x8006F3E8, 0x8006D798 — moving
+the hook bodies out of `debug_server.c`, and regenerating, since changing that
+list is one of the few things that needs a fresh recompiler pass. Not done yet.
+
 The executable lands in `build/`. `build/run.sh` wraps the whole loop — it
 rebuilds first, aborts if the build fails (so you never test a stale binary),
 and writes a timestamped log under `build/logs/`.
