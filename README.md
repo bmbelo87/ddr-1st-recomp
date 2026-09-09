@@ -58,6 +58,11 @@ overrides both.
 
 ## Build
 
+On Windows, run everything below from an **MSYS2** shell (Git Bash works too).
+The build goes through a POSIX-shell path and `build/run.sh` is a bash script,
+so cmd.exe and PowerShell are not enough. Linux and macOS need nothing special.
+Where this shows `python`, MSYS2 usually wants `py`.
+
 ```bash
 # 1. Clone with submodules — this brings the framework and the UI with it
 git clone --recurse-submodules https://github.com/bmbelo87/ddr-1st-recomp.git
@@ -83,8 +88,11 @@ python psxrecomp/psxrecomp_cli.py generate \
 #    cache, not on PATH, and the CLI resolves (or downloads) them for you.
 python psxrecomp/psxrecomp_cli.py rebuild \
   --config game.toml --project-root . --build-dir build \
-  --target ddr-1st-recomp
+  --target ddr-1st-recomp --cmake-extra=-DPSX_DEBUG_TOOLS=ON
 ```
+
+The `--cmake-extra=` needs the equals sign: argparse reads a value starting
+with `-` as another option and refuses the command.
 
 A plain `cmake -S . -B build -G Ninja` works too, but only if clang and ninja
 are already on your PATH.
@@ -114,12 +122,34 @@ and writes a timestamped log under `build/logs/`.
 
 ## Playing
 
-Run the executable, or `./run.sh` from `build/`. On first launch the launcher
-asks for the disc and writes a `settings.toml` beside the executable; that file
-is machine-specific and is not tracked here.
+From an MSYS2 shell:
 
-`run.sh` exposes the runtime switches as environment variables — `./run.sh` with
-no arguments plays the game clean. Run `head -30 build/run.sh` for the list.
+```bash
+cd build
+./run.sh              # builds first, then launches
+./run.sh mylabel      # same, and names the log build/logs/mylabel-<date>.log
+```
+
+`run.sh` rebuilds before every launch and **aborts if the build fails**, so you
+can never end up testing a stale binary — a mistake that cost a whole debugging
+session here once. It finds cmake through `CMakeCache.txt` when it is not on
+PATH, which is what makes a plain MSYS2 shell work.
+
+You can also double-click `Dance_Dance_Revolution_1st_Mix_Recompiled.exe` in
+`build/`. That skips the rebuild and the log, but plays the same.
+
+On first launch the launcher asks for the disc and writes a `settings.toml`
+beside the executable; that file holds absolute paths for this machine and is
+not tracked here.
+
+`./run.sh` with no arguments plays the game clean. Every diagnostic is opt-in
+through an environment variable — `UNLOCK=1` for the hidden modes and songs,
+`CHAIN=1` for the ordering-table detector, and so on. The list is the comment
+block at the top of the script:
+
+```bash
+head -30 build/run.sh
+```
 
 ---
 
