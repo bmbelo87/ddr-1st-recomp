@@ -42,6 +42,38 @@ known_crc32 = [
 ]
 
 [recompiler]
+# The BIOS profile this game is recompiled against. Without it the recompiler
+# looks for bios/SCPH1001.toml -- a retail dump this project neither ships nor
+# needs -- and fails with a message that reads like a missing file rather than
+# a missing setting. This build runs on the bundled OpenBIOS, and the path is
+# inside the submodule now that the framework is not a sibling directory.
+bios_config = "psxrecomp/bios/OpenBIOS.toml"
+
+# Each address here makes the recompiler emit psx_mod_function_entry() at that
+# function's entry. It is the only mod hook that survives a RELEASE build, and
+# changing this LIST is the one thing in src/ddr_hooks.c that needs a
+# regenerate -- the callbacks themselves rebuild in minutes.
+#
+# 0x8004A380  mode-select tick. Reads the pad and moves the cursor, so it is
+#             the only place EXIT GAME's navigation can eat a direction before
+#             the game acts on it.
+# 0x80049F9C  the item-list drawer, func(mode, highlighted, brightness).
+#             Draws the EXIT GAME line every frame (the game's own header call
+#             is gated on two bits of a frame counter and blinks), and takes
+#             the highlight away from every real item while EXIT is selected.
+# 0x80022268  the 3D model emitter, once per scene entry. Where a scene entry
+#             drawn twice in one interval is suppressed -- the freeze.
+# 0x8007259C  the ordering-table merge. Ends the interval above, and is a
+#             convenient once-a-frame place for the unlock mask.
+# 0x8006F3E8  the animation driver. Reads the pointer that, when invalid,
+#             starts the chain that ends in the freeze.
+mod_function_entry_funcs = [
+    "0x8004A380",
+    "0x80049F9C",
+    "0x80022268",
+    "0x8007259C",
+    "0x8006F3E8",
+]
 seeds   = "recompiler/seeds/seeds.txt"
 out_dir = "generated"
 # strict = false: bring-up found call sites the seed list does not reach yet.

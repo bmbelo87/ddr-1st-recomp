@@ -33,7 +33,12 @@ file(GLOB GAME_FULL CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/generated/*_full_*.c")
 file(GLOB GAME_DISPATCH "${CMAKE_CURRENT_SOURCE_DIR}/generated/*_dispatch.c")
 
+# Game hooks. These ride psx_mod_function_entry, which survives a release
+# build -- unlike debug_server's entry hook, where they started life.
+set(DDR_HOOKS "${CMAKE_CURRENT_SOURCE_DIR}/src/ddr_hooks.c")
+
 psxrecomp_add_runtime_target(ddr-1st-recomp
+    EXTRAS_SOURCES            ${DDR_HOOKS}
     GAME_GENERATED_FULL_C     ${GAME_FULL}
     GAME_GENERATED_DISPATCH_C "${GAME_DISPATCH}"
     WINDOW_TITLE              "Dance Dance Revolution 1st Mix Recompiled"
