@@ -24,6 +24,8 @@
 #   CHAIN=1 ./run.sh         -> checa a lista de blocos do modelo (repeticao)
 #   NOGUARD=1 ./run.sh       -> desliga a guarda do ponteiro de animacao
 #   NODEDUP=1 ./run.sh       -> desliga a supressao do desenho duplicado
+#   VSYNC=1 ./run.sh         -> forca 1 campo de espera (tentativa de 60 fps)
+#   FPS=1 ./run.sh           -> conta quadros por segundo (e chamadas 3D)
 #   NOBUILD=1 ./run.sh       -> nao recompila antes
 set -u
 LABEL="${1:-run}"
@@ -51,6 +53,8 @@ export PSX_CHAIN=1                # detecta E suprime o desenho duplicado
 [ -n "${TEXTTEST:-}" ] && export PSX_MENU_TEXT_TEST=1
 [ -n "${HDRTEST:-}" ] && { export PSX_MENU_TEXT_TEST=1 PSX_MENU_EXIT_X=-68 PSX_MENU_EXIT_Y=32; }
 [ -n "${UNLOCK:-}" ] && export PSX_UNLOCK="$UNLOCK"
+[ -n "${VSYNC:-}"  ] && export PSX_VSYNC="$VSYNC"
+[ -n "${FPS:-}"    ] && export PSX_FPS=1
 [ -n "${PRIM:-}"   ] && export PSX_PRIM_WATCH=1
 [ -n "${OTP:-}"    ] && export PSX_OT_PROBE=1
 [ -n "${NOGUARD:-}" ] && unset PSX_ANIM_GUARD
