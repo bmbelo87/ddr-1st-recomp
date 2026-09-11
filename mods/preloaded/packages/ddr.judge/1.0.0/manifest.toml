@@ -1,0 +1,46 @@
+format_version = 5
+id = "ddr.judge"
+version = "1.0.0"
+name = "Judgement Window"
+author = "ddr-1st-recomp"
+description = "Widens (or shifts) the PERFECT window. The game measures timing error in FRAMES, so running gameplay at 60 FPS halves every window in real time -- this is the dial that gives it back."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLPM-86222"
+
+[[feature]]
+id = "window"
+name = "Adjust the PERFECT window"
+description = "Disabled by default. The grade comes from three range checks on the timing error; this rewrites the constants of the first one, so GREAT and GOOD keep their own ranges and a wider PERFECT takes frames from GREAT rather than adding tolerance overall. You do not need this to play at 60 FPS: that mod already rescales all three windows on its own. Use this when you want to choose the number yourself -- it overrides the automatic value."
+group = "Gameplay"
+default_enabled = false
+
+[[plugin]]
+feature = "window"
+id = "ddr.judge.window"
+
+[[option]]
+feature = "window"
+id = "perfect"
+label = "PERFECT half-width (frames)"
+description = "In frames, measured at whatever rate you are running. 2 is the original at 30 FPS, and 4 is its equivalent at 60 FPS -- which is what the frame-rate mod already applies by itself. Go above that only if you want the game to be more forgiving than it ever was."
+group = "Gameplay"
+type = "integer"
+min = 1
+max = 8
+step = 1
+default = 4
+
+[[option]]
+feature = "window"
+id = "shift"
+label = "Window shift (frames)"
+description = "Moves the window off centre instead of widening it. Use this if steps that feel right are consistently graded the same way early or late: a constant bias is corrected by shifting, not by widening. 0 keeps the window centred."
+group = "Gameplay"
+type = "integer"
+min = -6
+max = 6
+step = 1
+default = 0

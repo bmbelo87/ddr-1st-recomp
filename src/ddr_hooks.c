@@ -207,6 +207,8 @@ static void ddr_activate_no_dancer(void){ s_feat_no_dancer = 1; }
 static void ddr_activate_dim_bg(void)   { s_feat_dim_bg    = 1; }
 static int      s_feat_bga_dark;
 static void ddr_activate_bga_dark(void) { s_feat_bga_dark  = 1; }
+static int      s_feat_judge;
+static void ddr_activate_judge(void)    { s_feat_judge     = 1; }
 static int      s_feat_warning;
 static void ddr_activate_warning(void)  { s_feat_warning   = 1; }
 
@@ -1855,6 +1857,97 @@ static void ptr_peek_tick(void)
     fflush(stderr);
 }
 
+/* ── Judgement window ───────────────────────────────────────────────────────
+ *
+ * The game grades a step with three range checks on the timing error, in plain
+ * arithmetic, at 0x8005C724..0x8005C758:
+ *
+ *     addiu v0,s0,2 ; sltiu v0,v0,5    delta in [-2,+2]  -> 1 PERFECT
+ *     addiu v0,s0,5 ; sltiu v0,v0,12   delta in [-5,+6]  -> 2 GREAT
+ *     addiu v0,s0,9 ; sltiu v0,v0,19   delta in [-9,+9]  -> 3 GOOD
+ *                                      otherwise         -> 4 BOO
+ *
+ * The unsigned compare is the idiom: delta + K < W means -K <= delta <= W-1-K.
+ * (GREAT is asymmetric -- one unit more on the positive side. That is the
+ * game's own choice, and scaling preserves it.)
+ *
+ * s0 counts FRAMES, which is why this lives next to the frame-rate mod: at
+ * 60 FPS the same real-world error counts twice as many units, so every window
+ * is half as long in milliseconds -- PERFECT drops from about +/-66 ms to about
+ * +/-33 ms. Nothing is broken; the ruler got finer. So the 60 FPS mod scales
+ * ALL THREE windows by two, which keeps the grading exactly as faithful as it
+ * was at 30 FPS. Scaling only PERFECT would have been worse than scaling none:
+ * a step that used to be GREAT would start reading GOOD.
+ *
+ * The Judgement Window mod then overrides PERFECT explicitly, and its value
+ * wins over the automatic compensation -- a player who asks for a number gets
+ * that number. GREAT and GOOD keep the faithful scaling underneath.
+ *
+ * Each immediate is replaced through psx_mod_write_code_word, which routes the
+ * address through the executable-RAM path so the recompiled block cannot keep
+ * serving the old constant. The SHAPE of every word is verified before writing,
+ * so a wrong address scribbles nothing. Feeding the stock numbers back through
+ * the same formula reproduces the original words bit for bit, which is how the
+ * arithmetic was checked before it ever ran.
+ */
+#define JUDGE_ADDIU_SHAPE 0x26020000u   /* addiu v0, s0, imm */
+#define JUDGE_SLTIU_SHAPE 0x2C420000u   /* sltiu v0, v0, imm */
+
+typedef struct { uint32_t addiu_addr, sltiu_addr; int k, w; } JudgeBand;
+
+/* Stock windows, in the order the game tests them. */
+static const JudgeBand JUDGE_BANDS[3] = {
+    { 0x8005C724u, 0x8005C728u, 2,  5 },   /* PERFECT: [-2,+2] */
+    { 0x8005C73Cu, 0x8005C740u, 5, 12 },   /* GREAT:   [-5,+6] */
+    { 0x8005C754u, 0x8005C758u, 9, 19 },   /* GOOD:    [-9,+9] */
+};
+
+static void judge_write_band(const JudgeBand *b, int k, int w)
+{
+    uint32_t want_a = JUDGE_ADDIU_SHAPE | (uint32_t)(k & 0xFFFF);
+    uint32_t want_b = JUDGE_SLTIU_SHAPE | (uint32_t)(w & 0xFFFF);
+    uint32_t cur_a  = psx_mod_read_word(b->addiu_addr);
+    uint32_t cur_b  = psx_mod_read_word(b->sltiu_addr);
+
+    if ((cur_a & 0xFFFF0000u) != JUDGE_ADDIU_SHAPE ||
+        (cur_b & 0xFFFF0000u) != JUDGE_SLTIU_SHAPE) return;   /* not the code we mapped */
+    if (cur_a == want_a && cur_b == want_b) return;
+
+    psx_mod_write_code_word(b->addiu_addr, want_a);
+    psx_mod_write_code_word(b->sltiu_addr, want_b);
+    fprintf(stderr, "ddr: janela %08X: %d..%+d quadros\n",
+            (unsigned)b->addiu_addr, -k, w - 1 - k);
+    fflush(stderr);
+}
+
+static void judge_tick(void)
+{
+    static int touched;
+
+    /* 60 FPS halves every window in real time, so it doubles every window in
+     * frames. Off, the scale is 1 and the stock numbers are restored. */
+    int scale = s_feat_fps60 ? 2 : 1;
+    if (!s_feat_judge && !s_feat_fps60 && !touched) return;
+    touched = 1;
+
+    for (int i = 0; i < 3; i++) {
+        int k = JUDGE_BANDS[i].k * scale;
+        int w = (JUDGE_BANDS[i].w - 1) * scale + 1;
+
+        if (i == 0 && s_feat_judge) {        /* the player's own PERFECT wins */
+            int n = option_int_pkg("ddr.judge", "window", "perfect", 2 * scale);
+            int c = option_int_pkg("ddr.judge", "window", "shift", 0);
+            if (n < 1) n = 1;
+            if (n > 16) n = 16;
+            if (c < -8) c = -8;
+            if (c > 8) c = 8;
+            k = n - c;
+            w = 2 * n + 1;
+        }
+        judge_write_band(&JUDGE_BANDS[i], k, w);
+    }
+}
+
 static void on_ot_merge(CPUState *cpu, uint32_t addr)
 {
     (void)cpu; (void)addr;
@@ -1872,6 +1965,7 @@ static void on_ot_merge(CPUState *cpu, uint32_t addr)
     tim_scan();
     tex_dump();
     mc_watch();
+    judge_tick();
     if (s_feat_warning) { warning_tick(); mcard_tick(); }
 
     if (s_feat_bga_dark) {
@@ -1912,6 +2006,7 @@ PSX_MOD_CONSTRUCTOR(ddr_register_hooks)
     (void)psx_mod_register_activation_plugin("ddr.menu.backdrop",   ddr_activate_menu_bd);
     (void)psx_mod_register_activation_plugin("ddr.warning.english", ddr_activate_warning);
     (void)psx_mod_register_activation_plugin("ddr.timing.offset",   ddr_activate_timing);
+    (void)psx_mod_register_activation_plugin("ddr.judge.window",    ddr_activate_judge);
 
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_SCREEN, on_menu_screen);
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_DRAW,   on_menu_draw);
