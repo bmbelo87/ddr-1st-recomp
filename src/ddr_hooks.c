@@ -23,6 +23,7 @@
 #include "warning_art.h"
 #include "mcard_art.h"
 #include "band_art.h"
+#include "hintbar_art.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2165,6 +2166,144 @@ static void band_tick(void)
     fflush(stderr);
 }
 
+/* -- Mode-select / song-select hint bar ------------------------------------
+ *
+ * Both screens carry the same 224x16 picture at the foot: left/right arrows,
+ * "pick with these", a circle, "confirm with this" -- the two sentences in
+ * Japanese. It is stored twice, once per screen, and the two copies are
+ * identical texel for texel, so one replacement covers both.
+ *
+ * Only the two text windows are repainted. The arrows and the circle are
+ * drawn in several colours and say nothing in any language, so their indices
+ * are read back out of VRAM and written straight through.
+ *
+ * The trigger is the picture itself rather than a screen number: the page is
+ * reused between screens, and hashing means our own English stops matching
+ * once it is in place, so the transfer happens once per upload instead of
+ * every frame.
+ */
+static uint32_t hintbar_hash(int bx, int by)
+{
+    uint32_t h = 2166136261u;
+    for (int y = 0; y < HINTBAR_H; y++)
+        for (int pass = 0; pass < 2; pass++) {
+            int a = pass ? HINTBAR_B0 : HINTBAR_A0;
+            int b = pass ? HINTBAR_B1 : HINTBAR_A1;
+            for (int u = a; u < b; u++) {
+                /* Bit 15 is dropped. It is texel data like any other here,
+                 * but it is the one bit a 16-bit VRAM snapshot cannot carry,
+                 * and the expected hash was measured from such a snapshot.
+                 * Ignoring it costs a bit of entropy in every fourth texel
+                 * and nothing else; the replacement still writes the bit
+                 * back verbatim. */
+                uint16_t hw  = gpu_vram_peek(bx + u / 4, by + y) & 0x7FFFu;
+                uint32_t idx = (uint32_t)((hw >> ((u & 3) * 4)) & 0x0Fu);
+                h = (h ^ idx) * 16777619u;
+            }
+        }
+    return h;
+}
+
+static void hintbar_one(int bx, int by, const unsigned char *art)
+{
+    /* The kept parts have to be read before the transfer opens: a GP0 0xA0
+     * transfer covers the whole strip, so the arrows and circle are carried
+     * across as data rather than left in place. */
+    uint8_t keep[HINTBAR_H][HINTBAR_W];
+    for (int y = 0; y < HINTBAR_H; y++)
+        for (int u = 0; u < HINTBAR_W; u++) {
+            uint16_t hw = gpu_vram_peek(bx + u / 4, by + y);
+            keep[y][u] = (uint8_t)((hw >> ((u & 3) * 4)) & 0x0Fu);
+        }
+
+    gpu_write_gp0(0xA0000000u);
+    gpu_write_gp0(((uint32_t)by << 16) | (uint32_t)bx);
+    gpu_write_gp0(((uint32_t)HINTBAR_H << 16) | (uint32_t)(HINTBAR_W / 4));
+
+    for (int y = 0; y < HINTBAR_H; y++) {
+        const unsigned char *row = art + (size_t)y * (HINTBAR_W / 8);
+        for (int hw = 0; hw < HINTBAR_W / 4; hw += 2) {
+            uint32_t word = 0u;
+            for (int k = 0; k < 2; k++) {
+                uint32_t half = 0u;
+                for (int t = 0; t < 4; t++) {
+                    int u = (hw + k) * 4 + t;
+                    int in_text = (u >= HINTBAR_A0 && u < HINTBAR_A1) ||
+                                  (u >= HINTBAR_B0 && u < HINTBAR_B1);
+                    uint32_t idx;
+                    if (in_text) {
+                        int set = (row[u >> 3] >> (7 - (u & 7))) & 1;
+                        idx = (uint32_t)(set ? HINTBAR_INK : HINTBAR_BG);
+                    } else {
+                        idx = keep[y][u];
+                    }
+                    half |= idx << (t * 4);
+                }
+                word |= half << (k * 16);
+            }
+            gpu_write_gp0(word);
+        }
+    }
+    fprintf(stderr, "ddr: hint bar replaced at %d,%d\n", bx, by);
+    fflush(stderr);
+}
+
+static void hintbar_tick(void)
+{
+    const unsigned char *art = lang_is_pt() ? hintbar_bits_pt : hintbar_bits_en;
+    for (int i = 0; i < HINTBAR_SPOTS; i++) {
+        int bx = hintbar_spot[i].x, by = hintbar_spot[i].y;
+        if (hintbar_hash(bx, by) != HINTBAR_JP_HASH) continue;
+        hintbar_one(bx, by, art);
+    }
+}
+
+/* -- Hint-bar probe (PSX_HBPROBE=<frames>) ---------------------------------
+ *
+ * If the bar stays Japanese there are only two ways it can happen: the
+ * picture is not where this file says it is, or it is there and the hash
+ * disagrees. The probe answers both -- it prints the window hash at each
+ * fixed spot, and it sweeps the whole of VRAM for the arrows, whose eight
+ * halfwords are left alone by the replacement and so survive it. */
+static const uint16_t HINTBAR_ARROW_SIG[8] = {
+    0x4C52u, 0x6EECu, 0x57EEu, 0x0002u, 0x4720u, 0x6EEEu, 0x77EEu, 0x0015u
+};
+
+static void hintbar_probe(void)
+{
+    static int      init;
+    static uint32_t every, frame;
+    if (!init) {
+        init = 1;
+        const char *e = getenv("PSX_HBPROBE");
+        every = (e && *e) ? (uint32_t)strtoul(e, NULL, 0) : 0u;
+    }
+    if (!every) return;
+    if (++frame % every) return;
+
+    fprintf(stderr, "ddr: hintbar mod Translated Screens = %s\n",
+            s_feat_warning ? "ligado" : "desligado");
+    for (int i = 0; i < HINTBAR_SPOTS; i++)
+        fprintf(stderr, "ddr: hintbar spot %d,%d hash=%08X (esperado %08X)\n",
+                hintbar_spot[i].x, hintbar_spot[i].y,
+                (unsigned)hintbar_hash(hintbar_spot[i].x, hintbar_spot[i].y),
+                (unsigned)HINTBAR_JP_HASH);
+
+    /* The sweep is half a million reads and makes the game crawl, so it is
+     * opt-in on its own: the hashes above are the cheap part and answer most
+     * of the question by themselves. */
+    if (!getenv("PSX_HBSWEEP")) { fflush(stderr); return; }
+    for (int y = 7; y < 512; y++)
+        for (int x = 0; x + 8 <= 1024; x++) {
+            int k = 0;
+            while (k < 8 &&
+                   (gpu_vram_peek(x + k, y) & 0x7FFFu) == HINTBAR_ARROW_SIG[k]) k++;
+            if (k == 8)
+                fprintf(stderr, "ddr: hintbar ACHADO em %d,%d\n", x, y - 7);
+        }
+    fflush(stderr);
+}
+
 static void on_ot_merge(CPUState *cpu, uint32_t addr)
 {
     (void)cpu; (void)addr;
@@ -2185,7 +2324,8 @@ static void on_ot_merge(CPUState *cpu, uint32_t addr)
     tex_dump();
     mc_watch();
     judge_tick();
-    if (s_feat_warning) { warning_tick(); mcard_tick(); band_tick(); }
+    if (s_feat_warning) { warning_tick(); mcard_tick(); band_tick(); hintbar_tick(); }
+    hintbar_probe();
 
     if (s_feat_bga_dark) {
         bga_flush();                 /* the last call of the frame */
