@@ -1687,6 +1687,139 @@ static void mc_watch(void)
     seq++;
 }
 
+/* ── Counter hunt (PSX_HUNT=1) ──────────────────────────────────────────────
+ *
+ * Finds the judgement counters the way a value scanner does, because reading
+ * the code blind is slower: a counter that tallies PERFECTs goes up exactly
+ * when you hit an arrow, while a frame timer goes up EVERY frame. Counting, per
+ * word, how many frames it incremented by one separates the two -- a tally
+ * moves on a few percent of frames, a clock on all of them.
+ *
+ * Scans the two regions the game keeps state in (the save block around
+ * 0x80010000 and the working area from 0x80070000), which keeps the per-frame
+ * cost to ~96K reads instead of half a million.
+ */
+#define HUNT_R0_LO 0x80010000u
+#define HUNT_R0_HI 0x80020000u
+#define HUNT_R1_LO 0x80070000u
+#define HUNT_R1_HI 0x800C0000u
+#define HUNT_WORDS (((HUNT_R0_HI - HUNT_R0_LO) + (HUNT_R1_HI - HUNT_R1_LO)) / 4u)
+
+static uint32_t hunt_addr_of(uint32_t i)
+{
+    uint32_t n0 = (HUNT_R0_HI - HUNT_R0_LO) / 4u;
+    return (i < n0) ? (HUNT_R0_LO + i * 4u) : (HUNT_R1_LO + (i - n0) * 4u);
+}
+
+static void hunt_tick(void)
+{
+    static int       enabled = -1;
+    static uint32_t *shadow;
+    static uint16_t *bumps;      /* frames in which this word went up by one */
+    static uint32_t  frames;
+
+    if (enabled < 0) { const char *e = getenv("PSX_HUNT"); enabled = (e && *e && *e != '0'); }
+    if (!enabled) return;
+
+    if (!shadow) {
+        shadow = (uint32_t *)calloc(HUNT_WORDS, sizeof *shadow);
+        bumps  = (uint16_t *)calloc(HUNT_WORDS, sizeof *bumps);
+        if (!shadow || !bumps) { enabled = 0; return; }
+        for (uint32_t i = 0; i < HUNT_WORDS; i++) shadow[i] = psx_mod_read_word(hunt_addr_of(i));
+        fprintf(stderr, "ddr: hunt armado (%u palavras)\n", (unsigned)HUNT_WORDS);
+        fflush(stderr);
+        return;
+    }
+
+    frames++;
+    for (uint32_t i = 0; i < HUNT_WORDS; i++) {
+        uint32_t v = psx_mod_read_word(hunt_addr_of(i));
+        if (v == shadow[i] + 1u && bumps[i] < 0xFFFFu) bumps[i]++;
+        shadow[i] = v;
+    }
+
+    if (frames % 1800u) return;        /* a report every ~30 s at 60 Hz */
+
+    fprintf(stderr, "ddr: --- hunt: %u quadros ---\n", (unsigned)frames);
+    for (uint32_t i = 0; i < HUNT_WORDS; i++) {
+        /* A tally moves often enough to notice and far less than every frame;
+         * anything above 60%% of frames is a clock, anything below a handful is
+         * noise. */
+        uint32_t b = bumps[i];
+        if (b < 8u || b * 100u > frames * 60u) continue;
+        fprintf(stderr, "ddr:   %08X  +1 em %u de %u quadros  valor=%u\n",
+                hunt_addr_of(i), (unsigned)b, (unsigned)frames,
+                (unsigned)psx_mod_read_word(hunt_addr_of(i)));
+    }
+    fflush(stderr);
+}
+
+/* ── Pointer finder / memory peek (PSX_PTRFIND, PSX_PEEK) ───────────────────
+ *
+ * Some variables have no static reference at all: the code reaches them
+ * through a pointer held in RAM, so no lui/addiu pair in the image names them
+ * and a disassembly search comes up empty. Finding the POINTER gives the thread
+ * back -- the pointer variable itself is usually statically addressed, and from
+ * there the disassembler can follow the code that uses it.
+ *
+ *   PSX_PTRFIND=0x800921D4   report every word in RAM holding a value within a
+ *                            kilobyte below that address (i.e. a pointer into
+ *                            the same structure), once.
+ *   PSX_PEEK=0x80092180:64   dump 64 words from that address every ~5 s.
+ */
+static void ptr_peek_tick(void)
+{
+    static int      init;
+    static uint32_t find_target, peek_addr, peek_words, frame;
+
+    if (!init) {
+        init = 1;
+        const char *f = getenv("PSX_PTRFIND");
+        if (f && *f) find_target = (uint32_t)strtoul(f, NULL, 0);
+        const char *k = getenv("PSX_PEEK");
+        if (k && *k) {
+            peek_addr = (uint32_t)strtoul(k, NULL, 0);
+            const char *c = strchr(k, ':');
+            peek_words = c ? (uint32_t)strtoul(c + 1, NULL, 0) : 16u;
+            if (peek_words > 256u) peek_words = 256u;
+        }
+    }
+
+    /* The scan runs DURING play, not at boot: at boot the structure does not
+     * exist yet and the pointer has not been stored, which is why an early scan
+     * comes back empty. Twice, so a pointer that only appears mid-song is still
+     * caught. */
+    if (find_target) {
+        static int done;
+        frame++;
+        if ((frame == 900u || frame == 2700u) && done < 2) {
+            done++;
+            fprintf(stderr, "ddr: --- ponteiros para perto de %08X (quadro %u) ---\n",
+                    (unsigned)find_target, (unsigned)frame);
+            for (uint32_t a = 0x80010000u; a < 0x801F0000u; a += 4u) {
+                uint32_t v = psx_mod_read_word(a);
+                uint32_t d = (v <= find_target) ? (find_target - v) : (v - find_target);
+                if (d <= 0x400u)
+                    fprintf(stderr, "ddr:   %08X -> %08X  (alvo em %s%u)\n",
+                            (unsigned)a, (unsigned)v,
+                            (v <= find_target) ? "+" : "-", (unsigned)d);
+            }
+            fflush(stderr);
+        }
+    }
+
+    if (!peek_addr) return;
+    if (frame++ % 300u) return;
+    fprintf(stderr, "ddr: peek %08X:\n", (unsigned)peek_addr);
+    for (uint32_t i = 0; i < peek_words; i += 4u) {
+        fprintf(stderr, "ddr:   %08X ", (unsigned)(peek_addr + i * 4u));
+        for (uint32_t k = 0; k < 4u && i + k < peek_words; k++)
+            fprintf(stderr, " %08X", (unsigned)psx_mod_read_word(peek_addr + (i + k) * 4u));
+        fprintf(stderr, "\n");
+    }
+    fflush(stderr);
+}
+
 static void on_ot_merge(CPUState *cpu, uint32_t addr)
 {
     (void)cpu; (void)addr;
@@ -1697,6 +1830,8 @@ static void on_ot_merge(CPUState *cpu, uint32_t addr)
      * honest -- a dropped present would otherwise read as a duplicate. */
     s_seen_n = 0;
     fps_tick(1);
+    hunt_tick();
+    ptr_peek_tick();
     vsync_force();
     prim_dump();
     tim_scan();

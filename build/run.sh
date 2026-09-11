@@ -32,6 +32,9 @@
 #   PRIMDUMP=2 ./run.sh      -> lista TODAS, com uv/clut/tpage (achar imagens)
 #   WS2D=1 ./run.sh          -> trata todo quadro como gameplay (teste do widescreen)
 #   VSYNC=1 ./run.sh         -> forca 1 campo de espera (tentativa de 60 fps)
+#   PTRFIND=0x800921D4 ./run.sh  -> acha ponteiros para essa estrutura
+#   PEEK=0x80092180:64 ./run.sh  -> despeja essa regiao de memoria
+#   HUNT=1 ./run.sh          -> caca os contadores de julgamento na RAM
 #   MERGE=1 ./run.sh         -> funde teclado + TODOS os controles no Player 1
 #                               (tapete para as setas + controle para Start/botoes)
 #   FPS=1 ./run.sh           -> conta quadros por segundo (e chamadas 3D)
@@ -76,6 +79,9 @@ export PSX_CHAIN=1                # detecta E suprime o desenho duplicado
 [ -n "${PRIMDUMP:-}" ] && export PSX_PRIMDUMP="$PRIMDUMP"
 [ -n "${WS2D:-}"   ] && export PSX_WS_FORCE_2D=1
 [ -n "${VSYNC:-}"  ] && export PSX_VSYNC="$VSYNC"
+[ -n "${PTRFIND:-}" ] && export PSX_PTRFIND="$PTRFIND"
+[ -n "${PEEK:-}"   ] && export PSX_PEEK="$PEEK"
+[ -n "${HUNT:-}"   ] && export PSX_HUNT=1
 [ -n "${MERGE:-}"  ] && export PSX_DEV_INPUT=1
 [ -n "${FPS:-}"    ] && export PSX_FPS=1
 [ -n "${PRIM:-}"   ] && export PSX_PRIM_WATCH=1
