@@ -918,10 +918,17 @@ static void prim_dump(void)
     if (!p) return;
 
     fprintf(stderr, "ddr: --- prim dump (buffer %08X..%08X) ---\n", p, cur);
+    uint32_t page_now = 0u;   /* a rectangle has no page of its own: it uses
+                               * whatever the last draw-mode command set. */
     for (int guard = 0; p < cur && guard < 4096; guard++) {
         uint32_t len = psx_mod_read_byte(p + 3u);
         if (len == 0u) break;
         uint32_t end = p + (len + 1u) * 4u;
+        if (len == 1u) {
+            uint32_t word = psx_mod_read_word(p + 4u);
+            if ((word >> 24) == 0xE1u) page_now = word & 0x7FFu;
+            p = end; continue;
+        }
         if (len < 3u) { p = end; continue; }
 
         uint32_t cmd = psx_mod_read_byte(p + 7u);
@@ -982,7 +989,7 @@ static void prim_dump(void)
                 /* Textured quad: tag, C0, XY0, UV0|CLUT, C1, XY1, UV1|TPAGE, ...
                  * so the page lives in the upper half of word 6. A rect has no
                  * page of its own -- it uses whatever E1 last set. */
-                uint32_t tpage = (cmd >= 0x60u) ? 0u : psx_mod_read_half(p + 26u);
+                uint32_t tpage = (cmd >= 0x60u) ? page_now : psx_mod_read_half(p + 26u);
                 snprintf(tex, sizeof tex, " uv=%02X,%02X clut=%04X tpage=%04X",
                          uvclut & 0xFFu, (uvclut >> 8) & 0xFFu,
                          (uvclut >> 16) & 0xFFFFu, tpage);
