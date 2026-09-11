@@ -254,6 +254,41 @@ static int option_int(const char *feature, const char *opt, int fallback)
     return option_int_pkg("ddr.menu", feature, opt, fallback);
 }
 
+/* ── Chart/music offset ─────────────────────────────────────────────────────
+ *
+ * The chart starts counting on the CD Play ACK, and the game was tuned for a
+ * real drive: on hardware the first audio frame is not audible until the disc
+ * has settled, so the music arrives a little AFTER the chart begins. The
+ * emulated drive starts instantly, so the music arrives early relative to the
+ * chart, and a player stepping to what they hear steps early -- which reads as
+ * GREAT on a step that felt perfect.
+ *
+ * runtime/src/cdrom.c already supports restoring that settle, as an opt-in
+ * environment variable read lazily at the first Play. Activation happens before
+ * the game boots, so setting it here is enough, and it keeps the value where a
+ * player can actually reach it instead of in a config file.
+ *
+ * This only shifts one way -- it can make the music later, never earlier. The
+ * opposite direction is the audio output cushion ([audio] buffer_ms in
+ * game.toml, 60 ms here), which is what delays what you HEAR relative to the
+ * emulated timeline. The two errors have opposite signs, which is why the
+ * result feels inconsistent rather than simply late.
+ */
+static void ddr_activate_timing(void)
+{
+    int ms = option_int_pkg("ddr.timing", "offset", "music_delay_ms", 0);
+    char buf[16];
+    snprintf(buf, sizeof buf, "%d", ms);
+#ifdef _WIN32
+    _putenv_s("PSX_CDDA_PLAY_DELAY_MS", buf);
+#else
+    setenv("PSX_CDDA_PLAY_DELAY_MS", buf, 1);
+#endif
+    fprintf(stderr, "ddr: music offset = %d ms\n", ms);
+    fflush(stderr);
+}
+
+
 static int      s_labels_done;
 static int      s_sprites_hidden;
 static int      s_menu_linked;
@@ -1876,6 +1911,7 @@ PSX_MOD_CONSTRUCTOR(ddr_register_hooks)
     (void)psx_mod_register_activation_plugin("ddr.widescreen.wide", ddr_activate_widescreen);
     (void)psx_mod_register_activation_plugin("ddr.menu.backdrop",   ddr_activate_menu_bd);
     (void)psx_mod_register_activation_plugin("ddr.warning.english", ddr_activate_warning);
+    (void)psx_mod_register_activation_plugin("ddr.timing.offset",   ddr_activate_timing);
 
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_SCREEN, on_menu_screen);
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_DRAW,   on_menu_draw);
