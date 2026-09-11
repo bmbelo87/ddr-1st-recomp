@@ -1,0 +1,6 @@
+# Mapeamentos de gamepad extras, no formato do SDL2.
+# Uma linha por dispositivo: <guid>,<nome>,<mapeamentos>,platform:<SO>,
+# O run.sh carrega este arquivo em SDL_GAMECONTROLLERCONFIG antes de abrir o jogo.
+# Sem um mapeamento, o SDL nao considera o dispositivo um "game controller" e o
+# runtime o ignora (ele so percorre os que passam em SDL_IsGameController).
+03000000091200000100000000000000,DDR Pad,dpleft:b0,dpdown:b1,dpup:b2,dpright:b3,platform:Windows,

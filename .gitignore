@@ -20,6 +20,9 @@
 /build-ci/
 /dist/
 !/build/run.sh
+# Mapeamentos de gamepad: fonte, nao saida de build. Sem eles o SDL nao
+# reconhece um tapete de danca como game controller e o runtime o ignora.
+!/build/gamecontrollerdb.txt
 
 # O settings.toml e escrito pelo launcher e guarda caminhos absolutos da
 # maquina (inclusive o nome de usuario). Cada um gera o seu no primeiro boot.

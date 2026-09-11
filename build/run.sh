@@ -32,12 +32,21 @@
 #   PRIMDUMP=2 ./run.sh      -> lista TODAS, com uv/clut/tpage (achar imagens)
 #   WS2D=1 ./run.sh          -> trata todo quadro como gameplay (teste do widescreen)
 #   VSYNC=1 ./run.sh         -> forca 1 campo de espera (tentativa de 60 fps)
+#   MERGE=1 ./run.sh         -> funde teclado + TODOS os controles no Player 1
+#                               (tapete para as setas + controle para Start/botoes)
 #   FPS=1 ./run.sh           -> conta quadros por segundo (e chamadas 3D)
 #   NOBUILD=1 ./run.sh       -> nao recompila antes
 set -u
 LABEL="${1:-run}"
 mkdir -p logs
 LOG="logs/${LABEL}-$(date +%m%d-%H%M%S).log"
+
+# Mapeamentos de gamepad (tapete de danca etc). O SDL2 le esta variavel na
+# inicializacao; sem mapeamento ele nao classifica o dispositivo como gamepad e
+# o runtime nem o enumera. Edite gamecontrollerdb.txt para acrescentar outros.
+if [ -f gamecontrollerdb.txt ]; then
+  export SDL_GAMECONTROLLERCONFIG="$(grep -v '^#' gamecontrollerdb.txt | grep -v '^[[:space:]]*$')"
+fi
 
 # O toggle F5 precisa saber o endereco do emissor; nao custa nada em execucao.
 export PSX_DANCER_FUNC=0x80022268
@@ -67,6 +76,7 @@ export PSX_CHAIN=1                # detecta E suprime o desenho duplicado
 [ -n "${PRIMDUMP:-}" ] && export PSX_PRIMDUMP="$PRIMDUMP"
 [ -n "${WS2D:-}"   ] && export PSX_WS_FORCE_2D=1
 [ -n "${VSYNC:-}"  ] && export PSX_VSYNC="$VSYNC"
+[ -n "${MERGE:-}"  ] && export PSX_DEV_INPUT=1
 [ -n "${FPS:-}"    ] && export PSX_FPS=1
 [ -n "${PRIM:-}"   ] && export PSX_PRIM_WATCH=1
 [ -n "${OTP:-}"    ] && export PSX_OT_PROBE=1
