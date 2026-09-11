@@ -59,3 +59,8 @@ desktop.ini
 *.swp
 /build-ci
 /dist
+
+# Capturas de quadro das sondas (analysis/): sao imagens e listas de primitivas
+# do jogo rodando, ou seja, obra da Konami em outra forma, alem de serem saida
+# de diagnostico reproduzivel. Ficam na maquina de quem investiga.
+/analysis/
