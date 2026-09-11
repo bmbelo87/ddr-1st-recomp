@@ -838,6 +838,109 @@ static void vsync_force(void)
     }
 }
 
+/* ── Big-primitive dump (PSX_PRIMDUMP=1) ────────────────────────────────────
+ *
+ * Walks the whole primitive buffer at the ordering-table merge and reports the
+ * ones that cover most of the screen, with their command byte, colour and
+ * extent. That is how a full-screen layer is identified without guessing:
+ * whatever paints the menu white has to be in here, and it has to be wide.
+ * Prints one burst every 120 frames so the console stays readable. */
+static void prim_dump(void)
+{
+    static int enabled = -1;
+    static uint32_t frame;
+
+    if (enabled < 0) { const char *e = getenv("PSX_PRIMDUMP"); enabled = (e && *e) ? atoi(e) : 0; }
+    if (!enabled) return;
+    if (frame++ % (enabled >= 2 ? 20u : 120u)) return;   /* level 2 chases short screens */
+
+    uint32_t ctx = psx_mod_read_word(MENU_PADPTR);
+    if (!ctx) return;
+    uint32_t cur = psx_mod_read_word(ctx + PRIM_PTR_OFF);
+    uint32_t s0  = psx_mod_read_word(PRIM_STARTS);
+    uint32_t s1  = psx_mod_read_word(PRIM_STARTS + 4u);
+    if (!in_ram(cur) || !in_ram(s0) || !in_ram(s1)) return;
+    uint32_t p = (cur >= s1 && s1 > s0) ? s1 : ((cur >= s0) ? s0 : 0u);
+    if (!p) return;
+
+    fprintf(stderr, "ddr: --- prim dump (buffer %08X..%08X) ---\n", p, cur);
+    for (int guard = 0; p < cur && guard < 4096; guard++) {
+        uint32_t len = psx_mod_read_byte(p + 3u);
+        if (len == 0u) break;
+        uint32_t end = p + (len + 1u) * 4u;
+        if (len < 3u) { p = end; continue; }
+
+        uint32_t cmd = psx_mod_read_byte(p + 7u);
+        int r = psx_mod_read_byte(p + 4u);
+        int g = psx_mod_read_byte(p + 5u);
+        int b = psx_mod_read_byte(p + 6u);
+        int x0 = 0x7FFF, y0 = 0x7FFF, x1 = -0x7FFF, y1 = -0x7FFF;
+        const char *kind = "?";
+
+        if (cmd >= 0x20u && cmd < 0x40u) {            /* polygon */
+            uint32_t tex = (cmd & 0x04u) ? 1u : 0u;
+            uint32_t gou = (cmd & 0x10u) ? 1u : 0u;
+            uint32_t nv  = (cmd & 0x08u) ? 4u : 3u;
+            uint32_t w   = 1u;                         /* word index, 0 = tag */
+            kind = "poly";
+            for (uint32_t v = 0; v < nv; v++) {
+                if (v == 0u || gou) w++;               /* colour word */
+                uint32_t a = p + w * 4u;
+                if (a + 4u > end) break;
+                int x = (int16_t)psx_mod_read_half(a);
+                int y = (int16_t)psx_mod_read_half(a + 2u);
+                if (x < x0) x0 = x;
+                if (x > x1) x1 = x;
+                if (y < y0) y0 = y;
+                if (y > y1) y1 = y;
+                w++;
+                if (tex) w++;
+            }
+        } else if (cmd >= 0x60u && cmd < 0x80u) {      /* rectangle / sprite */
+            uint32_t tex = (cmd & 0x04u) ? 1u : 0u;
+            uint32_t sz  = (cmd >> 3) & 3u;
+            uint32_t w   = 2u;
+            kind = "rect";
+            x0 = (int16_t)psx_mod_read_half(p + w * 4u);
+            y0 = (int16_t)psx_mod_read_half(p + w * 4u + 2u);
+            w++;
+            if (tex) w++;
+            int ww = (sz == 1u) ? 1 : (sz == 2u) ? 8 : (sz == 3u) ? 16 : 0;
+            int hh = ww;
+            if (sz == 0u && p + w * 4u + 4u <= end) {
+                ww = (uint16_t)psx_mod_read_half(p + w * 4u);
+                hh = (uint16_t)psx_mod_read_half(p + w * 4u + 2u);
+            }
+            x1 = x0 + ww; y1 = y0 + hh;
+        } else {
+            p = end; continue;
+        }
+
+        int w = x1 - x0, h = y1 - y0;
+        /* Level 1: only the full-screen layers. Level 2: everything, with the
+         * texture words, which is what identifies where in VRAM an image is
+         * and whether the screen is one picture or a hundred glyphs. */
+        if (enabled >= 2 || w >= 200 || h >= 180) {
+            char tex[64];
+            tex[0] = 0;
+            if (cmd & 0x04u) {
+                uint32_t uvclut = psx_mod_read_word(p + 12u);   /* uv + clut */
+                /* Textured quad: tag, C0, XY0, UV0|CLUT, C1, XY1, UV1|TPAGE, ...
+                 * so the page lives in the upper half of word 6. A rect has no
+                 * page of its own -- it uses whatever E1 last set. */
+                uint32_t tpage = (cmd >= 0x60u) ? 0u : psx_mod_read_half(p + 26u);
+                snprintf(tex, sizeof tex, " uv=%02X,%02X clut=%04X tpage=%04X",
+                         uvclut & 0xFFu, (uvclut >> 8) & 0xFFu,
+                         (uvclut >> 16) & 0xFFFFu, tpage);
+            }
+            fprintf(stderr, "ddr:  %08X cmd=%02X %s rgb=%3d,%3d,%3d  %dx%d at %d,%d%s\n",
+                    p, cmd, kind, r, g, b, w, h, x0, y0, tex);
+        }
+        p = end;
+    }
+    fflush(stderr);
+}
+
 /* ── Menu backdrop ──────────────────────────────────────────────────────────
  *
  * The mode-select screen lays a full-screen untextured rectangle over the
@@ -941,6 +1044,244 @@ static void menu_backdrop(int percent)
     }
 }
 
+/* ── TIM finder (PSX_TIMDUMP=1) ─────────────────────────────────────────────
+ *
+ * A TIM is Sony's texture file, and the game loads it from the disc into RAM
+ * before handing it to the GPU, so between those two moments the picture is
+ * just bytes a hook can read -- and, later, write. The header is rigid enough
+ * to scan for: 0x00000010, then flags whose low three bits are the pixel mode
+ * (0 = 4bpp, 1 = 8bpp, 2 = 16bpp) and whose bit 3 says a CLUT block follows.
+ * Each block carries its own byte count and its VRAM x/y/w/h, which is what
+ * lets a find be matched against the clut/tpage the draw call used.
+ *
+ * Every hit is written out as a PPM next to the executable. The hook runs in
+ * the host process, so writing a file is just fopen -- no debug build, no
+ * protocol, nothing to keep running.
+ */
+static void tim_write_ppm(const char *path, int w, int h, uint32_t px_addr,
+                          int bpp, uint32_t clut_addr, int clut_n)
+{
+    FILE *f = fopen(path, "wb");
+    if (!f) { fprintf(stderr, "ddr: tim: cannot write %s\n", path); return; }
+    fprintf(f, "P6\n%d %d\n255\n", w, h);
+
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            uint16_t c;
+            if (bpp == 16) {
+                c = psx_mod_read_half(px_addr + (uint32_t)(y * w + x) * 2u);
+            } else {
+                uint32_t i;
+                uint8_t idx;
+                if (bpp == 4) {
+                    i = (uint32_t)y * (uint32_t)w / 2u + (uint32_t)x / 2u;
+                    uint8_t byte = psx_mod_read_byte(px_addr + i);
+                    idx = (x & 1) ? (uint8_t)(byte >> 4) : (uint8_t)(byte & 0x0Fu);
+                } else {
+                    i = (uint32_t)y * (uint32_t)w + (uint32_t)x;
+                    idx = psx_mod_read_byte(px_addr + i);
+                }
+                if (clut_n && idx >= clut_n) idx = 0;
+                c = psx_mod_read_half(clut_addr + (uint32_t)idx * 2u);
+            }
+            /* BGR555 -> RGB888 */
+            unsigned char rgb[3];
+            rgb[0] = (unsigned char)(((c      ) & 0x1Fu) << 3);
+            rgb[1] = (unsigned char)(((c >>  5) & 0x1Fu) << 3);
+            rgb[2] = (unsigned char)(((c >> 10) & 0x1Fu) << 3);
+            fwrite(rgb, 1, 3, f);
+        }
+    }
+    fclose(f);
+}
+
+#define TIM_SEEN_MAX 32
+
+static void tim_scan(void)
+{
+    static int      enabled = -1;
+    static uint32_t frame;
+    static uint32_t seen[TIM_SEEN_MAX];
+    static int      seen_n;
+
+    if (enabled < 0) { const char *e = getenv("PSX_TIMDUMP"); enabled = (e && *e && *e != '0'); }
+    if (!enabled) return;
+    if (frame++ % 300u) return;                 /* every ~5 s, so screens can be visited */
+
+    fprintf(stderr, "ddr: --- TIM scan ---\n");
+    for (uint32_t a = 0x80010000u; a < 0x801F0000u; a += 4u) {
+        if (psx_mod_read_word(a) != 0x00000010u) continue;
+        uint32_t flags = psx_mod_read_word(a + 4u);
+        if (flags & ~0x0000000Fu) continue;
+        uint32_t mode = flags & 7u;
+        if (mode > 2u) continue;
+        int bpp = (mode == 0u) ? 4 : (mode == 1u) ? 8 : 16;
+        int has_clut = (flags & 8u) ? 1 : 0;
+        if ((bpp == 16) == has_clut) continue;  /* clut iff indexed */
+
+        uint32_t off = a + 8u;
+        uint32_t clut_addr = 0u;
+        int clut_n = 0;
+        if (has_clut) {
+            uint32_t blen = psx_mod_read_word(off);
+            uint32_t cw   = psx_mod_read_half(off + 8u);
+            uint32_t ch   = psx_mod_read_half(off + 10u);
+            if (blen < 12u || blen > 0x20000u || !cw || cw > 256u || !ch || ch > 256u) continue;
+            clut_addr = off + 12u;
+            clut_n    = (int)cw;
+            off      += blen;
+        }
+        uint32_t blen = psx_mod_read_word(off);
+        uint32_t vx   = psx_mod_read_half(off + 4u);
+        uint32_t vy   = psx_mod_read_half(off + 6u);
+        uint32_t hw   = psx_mod_read_half(off + 8u);   /* width in VRAM halfwords */
+        uint32_t hh   = psx_mod_read_half(off + 10u);
+        if (blen < 12u || blen > 0x100000u || !hw || !hh || hw > 1024u || hh > 512u) continue;
+
+        uint32_t w = (bpp == 4) ? hw * 4u : (bpp == 8) ? hw * 2u : hw;
+        int dup = 0;
+        for (int i = 0; i < seen_n; i++) if (seen[i] == a) dup = 1;
+        fprintf(stderr, "ddr:  TIM @%08X  %ubpp %ux%u  vram=%u,%u  clut=%d entries%s\n",
+                a, (unsigned)bpp, (unsigned)w, (unsigned)hh,
+                (unsigned)vx, (unsigned)vy, clut_n, dup ? "  (already written)" : "");
+        if (dup || seen_n >= TIM_SEEN_MAX) continue;
+        seen[seen_n++] = a;
+
+        char path[128];
+        snprintf(path, sizeof path, "tim_%08X_%ux%u.ppm", a, (unsigned)w, (unsigned)hh);
+        tim_write_ppm(path, (int)w, (int)hh, off + 12u, bpp, clut_addr, clut_n);
+        fprintf(stderr, "ddr:   -> %s\n", path);
+    }
+    fflush(stderr);
+}
+
+/* ── Texture dump (PSX_TEXDUMP=1) ───────────────────────────────────────────
+ *
+ * The RAM copy of a picture is transient -- the game reuses that buffer as
+ * soon as the upload is done, which is why a scan five seconds later finds the
+ * next screen's art instead. VRAM is not transient: while the image is on
+ * screen it is sitting in the frame store, and gpu_vram_peek reads it.
+ *
+ * So instead of hunting a file, this follows the draw calls: every textured
+ * primitive names a texture page and a palette, and each distinct pair is
+ * decoded once and written out. Whatever is on screen gets dumped, whatever
+ * its provenance.
+ *
+ * Page layout: tpage bits 0-3 are X/64, bit 4 is Y/256, bits 7-8 the depth
+ * (0 = 4bpp, 1 = 8bpp). A CLUT word is X/16 in bits 0-5 and Y in bits 6-14.
+ */
+extern uint16_t gpu_vram_peek(int x, int y);
+extern void     gpu_write_gp0(uint32_t val);
+
+#define TEX_SEEN_MAX 64
+
+static void tex_write(uint32_t tpage, uint32_t clut)
+{
+    static int seq;
+    int bpp = ((tpage >> 7) & 3u) == 0u ? 4 : (((tpage >> 7) & 3u) == 1u ? 8 : 16);
+    int px  = (int)(tpage & 0x0Fu) * 64;
+    int py  = (int)((tpage >> 4) & 1u) * 256;
+    int cx  = (int)(clut & 0x3Fu) * 16;
+    int cy  = (int)((clut >> 6) & 0x1FFu);
+    int w   = (bpp == 4) ? 256 : (bpp == 8) ? 128 : 64;
+
+    char path[128];
+    snprintf(path, sizeof path, "tex_%02d_%04X_%04X_%ubpp.ppm",
+             seq++, (unsigned)tpage, (unsigned)clut, (unsigned)bpp);
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fprintf(f, "P6\n%d %d\n255\n", w, 256);
+
+    for (int v = 0; v < 256; v++) {
+        for (int u = 0; u < w; u++) {
+            uint16_t c;
+            if (bpp == 16) {
+                c = gpu_vram_peek(px + u, py + v);
+            } else if (bpp == 8) {
+                uint16_t hw = gpu_vram_peek(px + u / 2, py + v);
+                uint8_t idx = (u & 1) ? (uint8_t)(hw >> 8) : (uint8_t)(hw & 0xFFu);
+                c = gpu_vram_peek(cx + idx, cy);
+            } else {
+                uint16_t hw = gpu_vram_peek(px + u / 4, py + v);
+                uint8_t idx = (uint8_t)((hw >> ((u & 3) * 4)) & 0x0Fu);
+                c = gpu_vram_peek(cx + idx, cy);
+            }
+            unsigned char rgb[3];
+            rgb[0] = (unsigned char)(((c      ) & 0x1Fu) << 3);
+            rgb[1] = (unsigned char)(((c >>  5) & 0x1Fu) << 3);
+            rgb[2] = (unsigned char)(((c >> 10) & 0x1Fu) << 3);
+            fwrite(rgb, 1, 3, f);
+        }
+    }
+    fclose(f);
+    fprintf(stderr, "ddr:  texture tpage=%04X clut=%04X %ubpp  page at VRAM %d,%d "
+                    "palette at %d,%d  -> %s\n",
+            (unsigned)tpage, (unsigned)clut, (unsigned)bpp, px, py, cx, cy, path);
+    fflush(stderr);
+}
+
+/* Level 2 keys on the SHAPE of the frame -- how many strips, how wide, where --
+ * not just the page and palette. A page whose contents are rewritten between
+ * screens (0x0015 carries three different messages) then dumps once per screen
+ * instead of once ever. */
+static void tex_dump(void)
+{
+    static int      enabled = -1;
+    static uint32_t seen[TEX_SEEN_MAX];
+    static int      seen_n;
+    static uint32_t last_shape;
+
+    if (enabled < 0) { const char *e = getenv("PSX_TEXDUMP"); enabled = (e && *e) ? atoi(e) : 0; }
+    if (!enabled) return;
+
+    uint32_t ctx = psx_mod_read_word(MENU_PADPTR);
+    if (!ctx) return;
+    uint32_t cur = psx_mod_read_word(ctx + PRIM_PTR_OFF);
+    uint32_t s0  = psx_mod_read_word(PRIM_STARTS);
+    uint32_t s1  = psx_mod_read_word(PRIM_STARTS + 4u);
+    if (!in_ram(cur) || !in_ram(s0) || !in_ram(s1)) return;
+    uint32_t p = (cur >= s1 && s1 > s0) ? s1 : ((cur >= s0) ? s0 : 0u);
+    if (!p) return;
+
+    /* One pass to describe the frame's textured strips, so a changed layout can
+     * re-arm the dump. */
+    if (enabled >= 2) {
+        uint32_t shape = 0u, q = p;
+        for (int guard = 0; q < cur && guard < 4096; guard++) {
+            uint32_t len = psx_mod_read_byte(q + 3u);
+            if (len == 0u) break;
+            uint32_t cmd = psx_mod_read_byte(q + 7u);
+            if (len >= 3u && (cmd & 0x04u) && cmd >= 0x20u && cmd < 0x60u) {
+                int x0 = (int16_t)psx_mod_read_half(q + 8u);
+                int y0 = (int16_t)psx_mod_read_half(q + 10u);
+                shape = shape * 31u + (uint32_t)(x0 * 7 + y0) +
+                        psx_mod_read_half(q + 26u);
+            }
+            q += (len + 1u) * 4u;
+        }
+        if (shape != last_shape) { last_shape = shape; seen_n = 0; }
+    }
+
+    for (int guard = 0; p < cur && guard < 4096; guard++) {
+        uint32_t len = psx_mod_read_byte(p + 3u);
+        if (len == 0u) break;
+        uint32_t end = p + (len + 1u) * 4u;
+        uint32_t cmd = psx_mod_read_byte(p + 7u);
+        if (len >= 3u && (cmd & 0x04u) && cmd >= 0x20u && cmd < 0x60u) {
+            uint32_t clut  = psx_mod_read_half(p + 14u);
+            uint32_t tpage = psx_mod_read_half(p + 26u);
+            uint32_t key   = (tpage << 16) | clut;
+            int dup = 0;
+            for (int i = 0; i < seen_n; i++) if (seen[i] == key) dup = 1;
+            if (!dup && seen_n < TEX_SEEN_MAX) {
+                seen[seen_n++] = key;
+                tex_write(tpage, clut);
+            }
+        }
+        p = end;
+    }
+}
+
 static void on_ot_merge(CPUState *cpu, uint32_t addr)
 {
     (void)cpu; (void)addr;
@@ -952,6 +1293,9 @@ static void on_ot_merge(CPUState *cpu, uint32_t addr)
     s_seen_n = 0;
     fps_tick(1);
     vsync_force();
+    prim_dump();
+    tim_scan();
+    tex_dump();
 
     if (s_feat_bga_dark) {
         bga_flush();                 /* the last call of the frame */
