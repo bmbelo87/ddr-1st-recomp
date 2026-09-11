@@ -35,6 +35,7 @@
 #   VRAMFULL=300 ./run.sh    -> mapa da VRAM a cada N quadros (ate 12 arquivos)
 #   HBPROBE=120 ./run.sh     -> hash da barra de dicas a cada N quadros
 #   HBSWEEP=1 ./run.sh       -> + varredura da VRAM atras dela (lento)
+#   DESCDUMP=1 ./run.sh      -> grava a caixa de descricao a cada vez que muda
 #   VRAMDUMP='896,0,256,40,3D20,320,256,64' ./run.sh  -> extrai regiao da VRAM
 #   PTRFIND=0x800921D4 ./run.sh  -> acha ponteiros para essa estrutura
 #   PEEK=0x80092180:64 ./run.sh  -> despeja essa regiao de memoria
@@ -86,6 +87,7 @@ export PSX_CHAIN=1                # detecta E suprime o desenho duplicado
 [ -n "${VRAMFULL:-}" ] && export PSX_VRAMFULL="$VRAMFULL"
 [ -n "${HBPROBE:-}" ] && export PSX_HBPROBE="$HBPROBE"
 [ -n "${HBSWEEP:-}" ] && export PSX_HBSWEEP="$HBSWEEP"
+[ -n "${DESCDUMP:-}" ] && export PSX_DESCDUMP="$DESCDUMP"
 [ -n "${VRAMDUMP:-}" ] && export PSX_VRAMDUMP="$VRAMDUMP"
 [ -n "${PTRFIND:-}" ] && export PSX_PTRFIND="$PTRFIND"
 [ -n "${PEEK:-}"   ] && export PSX_PEEK="$PEEK"

@@ -24,6 +24,7 @@
 #include "mcard_art.h"
 #include "band_art.h"
 #include "hintbar_art.h"
+#include "desc_art.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2304,6 +2305,118 @@ static void hintbar_probe(void)
     fflush(stderr);
 }
 
+/* -- Mode description probe (PSX_DESCDUMP=1) -------------------------------
+ *
+ * The red box under the mode wheel is one picture per mode, uploaded into the
+ * same slot at VRAM (320,48) as the player moves between EASY, NORMAL and
+ * HARD. Catching all three by timing snapshots is a game of luck, so this
+ * watches the slot instead: whenever its contents change to something not
+ * seen before, the picture is written out and its hash printed.
+ *
+ * The hash is computed here rather than measured from a snapshot later, so it
+ * is the real one -- bit 15 included -- and can be used as a trigger as it
+ * stands.
+ */
+static uint32_t desc_hash(void)
+{
+    uint32_t h = 2166136261u;
+    for (int y = 0; y < DESC_H; y++)
+        for (int x = 0; x < DESC_W; x++) {
+            uint16_t hw  = gpu_vram_peek(DESC_X + x / 4, DESC_Y + y) & 0x7FFFu;
+            uint32_t idx = (uint32_t)((hw >> ((x & 3) * 4)) & 0x0Fu);
+            h = (h ^ idx) * 16777619u;
+        }
+    return h;
+}
+
+static void desc_dump(void)
+{
+    static int      init, on, seq;
+    static uint32_t seen[16];
+
+    if (!init) { init = 1; on = getenv("PSX_DESCDUMP") != NULL; }
+    if (!on || seq >= 16) return;
+
+    uint32_t h = desc_hash();
+    for (int i = 0; i < seq; i++) if (seen[i] == h) return;
+    seen[seq] = h;
+
+    int cx = (int)(DESC_CLUT & 0x3Fu) * 16;
+    int cy = (int)((DESC_CLUT >> 6) & 0x1FFu);
+
+    char path[32];
+    snprintf(path, sizeof path, "desc_%02d.ppm", seq);
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fprintf(f, "P6\n%d %d\n255\n", DESC_W, DESC_H);
+    for (int y = 0; y < DESC_H; y++)
+        for (int x = 0; x < DESC_W; x++) {
+            uint16_t hw  = gpu_vram_peek(DESC_X + x / 4, DESC_Y + y);
+            int      idx = (int)((hw >> ((x & 3) * 4)) & 0x0Fu);
+            uint16_t c   = gpu_vram_peek(cx + idx, cy);
+            unsigned char rgb[3];
+            rgb[0] = (unsigned char)(((c      ) & 0x1Fu) << 3);
+            rgb[1] = (unsigned char)(((c >>  5) & 0x1Fu) << 3);
+            rgb[2] = (unsigned char)(((c >> 10) & 0x1Fu) << 3);
+            fwrite(rgb, 1, 3, f);
+        }
+    fclose(f);
+    fprintf(stderr, "ddr: %s gravado, hash=%08X\n", path, (unsigned)h);
+    fflush(stderr);
+    seq++;
+}
+
+/* -- Mode descriptions ------------------------------------------------------
+ *
+ * Five lines of Japanese in one block of VRAM, three modes' worth. They are
+ * repainted together, in one transfer, because that is how they are stored:
+ * picking a mode only moves the v coordinate the box is drawn from.
+ *
+ * See desc_art.h for the layout and for why the region stops at row 120.
+ */
+static void desc_tick(void)
+{
+    int cx = (int)(DESC_CLUT & 0x3Fu) * 16;
+    int cy = (int)((DESC_CLUT >> 6) & 0x1FFu);
+
+    int ink = 0, best = -1;
+    for (int i = 0; i < 16; i++) {
+        uint16_t c = gpu_vram_peek(cx + i, cy);
+        int lum = (int)((c & 0x1Fu) + ((c >> 5) & 0x1Fu) + ((c >> 10) & 0x1Fu));
+        if (lum > best) { best = lum; ink = i; }
+    }
+    /* The top-left texel of the block is above the first line, so it is
+     * ground by construction. */
+    int bg = (int)(gpu_vram_peek(DESC_X, DESC_Y) & 0x0Fu);
+    if (ink == bg) return;
+    if (desc_hash() != DESC_JP_HASH) return;
+
+    const unsigned char *art = lang_is_pt() ? desc_bits_pt : desc_bits_en;
+
+    gpu_write_gp0(0xA0000000u);
+    gpu_write_gp0(((uint32_t)DESC_Y << 16) | (uint32_t)DESC_X);
+    gpu_write_gp0(((uint32_t)DESC_H << 16) | (uint32_t)(DESC_W / 4));
+
+    for (int y = 0; y < DESC_H; y++) {
+        const unsigned char *row = art + (size_t)y * (DESC_W / 8);
+        for (int hw = 0; hw < DESC_W / 4; hw += 2) {
+            uint32_t word = 0u;
+            for (int k = 0; k < 2; k++) {
+                uint32_t half = 0u;
+                for (int t = 0; t < 4; t++) {
+                    int x   = (hw + k) * 4 + t;
+                    int set = (row[x >> 3] >> (7 - (x & 7))) & 1;
+                    half |= (uint32_t)(set ? ink : bg) << (t * 4);
+                }
+                word |= half << (k * 16);
+            }
+            gpu_write_gp0(word);
+        }
+    }
+    fprintf(stderr, "ddr: mode descriptions replaced\n");
+    fflush(stderr);
+}
+
 static void on_ot_merge(CPUState *cpu, uint32_t addr)
 {
     (void)cpu; (void)addr;
@@ -2324,8 +2437,9 @@ static void on_ot_merge(CPUState *cpu, uint32_t addr)
     tex_dump();
     mc_watch();
     judge_tick();
-    if (s_feat_warning) { warning_tick(); mcard_tick(); band_tick(); hintbar_tick(); }
+    if (s_feat_warning) { warning_tick(); mcard_tick(); band_tick(); hintbar_tick(); desc_tick(); }
     hintbar_probe();
+    desc_dump();
 
     if (s_feat_bga_dark) {
         bga_flush();                 /* the last call of the frame */
