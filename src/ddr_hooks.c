@@ -20,6 +20,8 @@
  */
 #include "mod_plugins.h"
 #include "cpu_state.h"
+#include "warning_art.h"
+#include "mcard_art.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -205,6 +207,21 @@ static void ddr_activate_no_dancer(void){ s_feat_no_dancer = 1; }
 static void ddr_activate_dim_bg(void)   { s_feat_dim_bg    = 1; }
 static int      s_feat_bga_dark;
 static void ddr_activate_bga_dark(void) { s_feat_bga_dark  = 1; }
+static int      s_feat_warning;
+static void ddr_activate_warning(void)  { s_feat_warning   = 1; }
+
+/* Which artwork to upload. The language is a choice option rather than a second
+ * feature because the two are mutually exclusive -- the mod format asks for
+ * exactly that. Read fresh at each replacement, so changing it in the launcher
+ * takes effect the next time a screen appears. */
+static int lang_is_pt(void)
+{
+    char buf[16];
+    if (psx_mod_option_value("ddr.warning", "translate", "language", buf, sizeof buf) &&
+        (buf[0] == 'p' || buf[0] == 'P'))
+        return 1;
+    return 0;
+}
 static int      s_feat_menu_bd;
 static void ddr_activate_menu_bd(void)  { s_feat_menu_bd   = 1; }
 static int      s_feat_fps60;
@@ -1282,6 +1299,394 @@ static void tex_dump(void)
     }
 }
 
+/* ── CAUTION screen in English ──────────────────────────────────────────────
+ *
+ * The screen is a 256x160 picture drawn as ten textured strips of 256x16 out
+ * of the page at tpage 0x000A (VRAM 640,0), 4bpp, palette 0x7C3C (VRAM
+ * 960,496). Two palette entries carry the whole thing: black paper, cream ink.
+ *
+ * Replacing it does not mean finding the file. The RAM copy is transient -- the
+ * game reuses that buffer the moment the upload finishes -- but VRAM holds the
+ * picture for as long as it is on screen, and gpu_write_gp0 is exported, so a
+ * real CPU-to-VRAM transfer can be issued down the same path the game uses.
+ * No external file for the player to lose, and no patched game code.
+ *
+ * The palette indices are read, never assumed: whichever of the sixteen
+ * entries is darkest becomes paper and whichever is brightest becomes ink. A
+ * 4bpp VRAM halfword packs four texels, low nibble leftmost.
+ */
+#define WARN_TPAGE   0x000Au
+#define WARN_CLUT    0x7C3Cu
+
+static void warning_replace(void)
+{
+    int cx = (int)(WARN_CLUT & 0x3Fu) * 16;
+    int cy = (int)((WARN_CLUT >> 6) & 0x1FFu);
+    int px = (int)(WARN_TPAGE & 0x0Fu) * 64;
+    int py = (int)((WARN_TPAGE >> 4) & 1u) * 256;
+
+    int ink = 0, paper = 0, best = -1, worst = 1 << 30;
+    for (int i = 0; i < 16; i++) {
+        uint16_t c = gpu_vram_peek(cx + i, cy);
+        int lum = (int)((c & 0x1Fu) + ((c >> 5) & 0x1Fu) + ((c >> 10) & 0x1Fu));
+        if (lum > best)  { best = lum;  ink = i; }
+        if (lum < worst) { worst = lum; paper = i; }
+    }
+    if (ink == paper) return;                      /* palette not loaded yet */
+
+    gpu_write_gp0(0xA0000000u);                                    /* CPU -> VRAM */
+    gpu_write_gp0(((uint32_t)py << 16) | (uint32_t)px);            /* destination */
+    gpu_write_gp0(((uint32_t)WARNING_H << 16) | 64u);           /* 64 halfwords x 160 */
+
+    const unsigned char *art = lang_is_pt() ? warning_bits_pt : warning_bits_en;
+    for (int y = 0; y < WARNING_H; y++) {
+        const unsigned char *row = art + (size_t)y * (WARNING_W / 8);
+        for (int hw = 0; hw < 64; hw += 2) {                       /* two halfwords per word */
+            uint32_t word = 0u;
+            for (int k = 0; k < 2; k++) {
+                uint32_t half = 0u;
+                for (int t = 0; t < 4; t++) {
+                    int x   = (hw + k) * 4 + t;
+                    int set = (row[x >> 3] >> (7 - (x & 7))) & 1;
+                    half |= (uint32_t)(set ? ink : paper) << (t * 4);
+                }
+                word |= half << (k * 16);
+            }
+            gpu_write_gp0(word);
+        }
+    }
+}
+
+/* True when this frame draws the CAUTION strips, which is the only moment the
+ * picture is both present and ours to overwrite. */
+static int warning_on_screen(void)
+{
+    uint32_t ctx = psx_mod_read_word(MENU_PADPTR);
+    if (!ctx) return 0;
+    uint32_t cur = psx_mod_read_word(ctx + PRIM_PTR_OFF);
+    uint32_t s0  = psx_mod_read_word(PRIM_STARTS);
+    uint32_t s1  = psx_mod_read_word(PRIM_STARTS + 4u);
+    if (!in_ram(cur) || !in_ram(s0) || !in_ram(s1)) return 0;
+    uint32_t p = (cur >= s1 && s1 > s0) ? s1 : ((cur >= s0) ? s0 : 0u);
+    if (!p) return 0;
+
+    for (int guard = 0; p < cur && guard < 4096; guard++) {
+        uint32_t len = psx_mod_read_byte(p + 3u);
+        if (len == 0u) break;
+        uint32_t end = p + (len + 1u) * 4u;
+        uint32_t cmd = psx_mod_read_byte(p + 7u);
+        if (len >= 3u && (cmd & 0x04u) && cmd >= 0x20u && cmd < 0x60u &&
+            psx_mod_read_half(p + 14u) == WARN_CLUT &&
+            psx_mod_read_half(p + 26u) == WARN_TPAGE)
+            return 1;
+        p = end;
+    }
+    return 0;
+}
+
+/* The red bar under the title is not part of the texture: it is a separate
+ * flat rectangle, 44x6, sized for the two ideograms of the original title.
+ * "CAUTION" is 65 px wide, so the bar is re-cut around its own centre to match
+ * -- the one measurement that has to agree with the artwork, kept next to it. */
+#define WARN_RULE_W   44
+#define WARN_RULE_H   6
+#define WARN_TITLE_W  66
+
+static void warning_rule(void)
+{
+    uint32_t ctx = psx_mod_read_word(MENU_PADPTR);
+    if (!ctx) return;
+    uint32_t cur = psx_mod_read_word(ctx + PRIM_PTR_OFF);
+    uint32_t s0  = psx_mod_read_word(PRIM_STARTS);
+    uint32_t s1  = psx_mod_read_word(PRIM_STARTS + 4u);
+    if (!in_ram(cur) || !in_ram(s0) || !in_ram(s1)) return;
+    uint32_t p = (cur >= s1 && s1 > s0) ? s1 : ((cur >= s0) ? s0 : 0u);
+    if (!p) return;
+
+    for (int guard = 0; p < cur && guard < 4096; guard++) {
+        uint32_t len = psx_mod_read_byte(p + 3u);
+        if (len == 0u) break;
+        uint32_t end = p + (len + 1u) * 4u;
+        if (len >= 3u && psx_mod_read_byte(p + 7u) == 0x60u && p + 16u <= end) {
+            int w = (uint16_t)psx_mod_read_half(p + 12u);
+            int h = (uint16_t)psx_mod_read_half(p + 14u);
+            if (w == WARN_RULE_W && h == WARN_RULE_H) {
+                int x  = (int16_t)psx_mod_read_half(p + 8u);
+                int cx = x + WARN_RULE_W / 2;
+                psx_mod_write_half(p + 8u,  (uint16_t)(int16_t)(cx - WARN_TITLE_W / 2));
+                psx_mod_write_half(p + 12u, (uint16_t)WARN_TITLE_W);
+                return;
+            }
+        }
+        p = end;
+    }
+}
+
+static void warning_tick(void)
+{
+    static int applied;
+    if (!warning_on_screen()) { applied = 0; return; }  /* re-arm: the game may reload it */
+    warning_rule();                                     /* every frame: the list is rebuilt */
+    if (applied) return;
+    warning_replace();
+    applied = 1;
+    fprintf(stderr, "ddr: CAUTION screen replaced\n");
+    fflush(stderr);
+}
+
+/* ── Memory-card messages in English ────────────────────────────────────────
+ *
+ * The page at tpage 0x0015 (VRAM 320,256) is a message board: band 0 is the
+ * line that changes, bands 1 and 2 the fixed warning. Each band is drawn as
+ * its own strip, cut to the width of the Japanese line it carries.
+ *
+ * Identification cannot be "three strips are on screen" -- that fired on every
+ * message alike and painted "Now checking." over "now loading". Nor can it be
+ * a hash of the whole band: the game overwrites only as many pixels as the new
+ * line is wide, so the tail of the previous message survives and poisons the
+ * hash. What IS stable is the pair the game itself provides: the width of the
+ * strip, and the pixels under exactly that width. Unknown pair -> nothing is
+ * touched, so an unseen message stays Japanese rather than turning into the
+ * wrong sentence.
+ */
+#define MCARD_TPAGE  0x0015u
+#define MCARD_CLUT   0x7C3Cu
+#define MCARD_PAGE_X 320
+#define MCARD_PAGE_Y 256
+
+/* The palette holds several black entries, so "is this pixel the darkest
+ * index" is not the same question as "is this pixel background" -- picking the
+ * wrong black made every background pixel read as ink and no hash ever
+ * matched. Compare the COLOUR the index resolves to instead: a texel is ink
+ * when its palette colour is not black. */
+static void mcard_palette(uint16_t *pal, int *ink, int *paper)
+{
+    int cx = (int)(MCARD_CLUT & 0x3Fu) * 16;
+    int cy = (int)((MCARD_CLUT >> 6) & 0x1FFu);
+    int best = -1, worst = 1 << 30;
+    *ink = *paper = 0;
+    for (int i = 0; i < 16; i++) {
+        pal[i] = gpu_vram_peek(cx + i, cy);
+        int lum = (int)((pal[i] & 0x1Fu) + ((pal[i] >> 5) & 0x1Fu) + ((pal[i] >> 10) & 0x1Fu));
+        if (lum > best)  { best = lum;  *ink = i; }
+        if (lum < worst) { worst = lum; *paper = i; }
+    }
+}
+
+static uint32_t mcard_vram_hash(int band, int width, const uint16_t *pal)
+{
+    uint32_t h = 2166136261u;
+    for (int y = band * 16; y < band * 16 + 16; y++)
+        for (int x = 0; x < width; x++) {
+            uint16_t hw  = gpu_vram_peek(MCARD_PAGE_X + x / 4, MCARD_PAGE_Y + y);
+            int      idx = (int)((hw >> ((x & 3) * 4)) & 0x0Fu);
+            h = (h ^ (uint32_t)((pal[idx] & 0x7FFFu) != 0u)) * 16777619u;
+        }
+    return h;
+}
+
+/* The same hash over one of our own bands, so a band we already replaced can be
+ * recognised without keeping state the game could invalidate behind our back. */
+static uint32_t mcard_bits_hash(int msg)
+{
+    const unsigned char *art = lang_is_pt() ? mcard_bits_pt : mcard_bits_en;
+    const unsigned char *src = art + (size_t)msg * MCARD_BAND_BYTES;
+    uint32_t h = 2166136261u;
+    for (int y = 0; y < MCARD_BAND_H; y++) {
+        const unsigned char *row = src + (size_t)y * (MCARD_BAND_W / 8);
+        for (int x = 0; x < MCARD_BAND_W; x++)
+            h = (h ^ (uint32_t)((row[x >> 3] >> (7 - (x & 7))) & 1)) * 16777619u;
+    }
+    return h;
+}
+
+static void mcard_upload_band(int band, int msg, int ink, int paper)
+{
+    gpu_write_gp0(0xA0000000u);
+    gpu_write_gp0(((uint32_t)(MCARD_PAGE_Y + band * 16) << 16) | (uint32_t)MCARD_PAGE_X);
+    gpu_write_gp0(((uint32_t)MCARD_BAND_H << 16) | 64u);
+
+    const unsigned char *art = lang_is_pt() ? mcard_bits_pt : mcard_bits_en;
+    const unsigned char *src = art + (size_t)msg * MCARD_BAND_BYTES;
+    for (int y = 0; y < MCARD_BAND_H; y++) {
+        const unsigned char *row = src + (size_t)y * (MCARD_BAND_W / 8);
+        for (int hw = 0; hw < 64; hw += 2) {
+            uint32_t word = 0u;
+            for (int k = 0; k < 2; k++) {
+                uint32_t half = 0u;
+                for (int t = 0; t < 4; t++) {
+                    int x   = (hw + k) * 4 + t;
+                    int set = (row[x >> 3] >> (7 - (x & 7))) & 1;
+                    half |= (uint32_t)(set ? ink : paper) << (t * 4);
+                }
+                word |= half << (k * 16);
+            }
+            gpu_write_gp0(word);
+        }
+    }
+}
+
+/* A textured quad is tag, C0, XY0, UV0|CLUT, C1, XY1, UV1|TPAGE, C2, XY2, UV2,
+ * C3, XY3, UV3. A replaced line is re-cut to the full 256 at the long line's
+ * left margin, in screen and texture space together, so the centred English is
+ * not clipped to the width of the Japanese sentence it replaced. */
+/* A textured quad is tag, C0, XY0, UV0|CLUT, C1, XY1, UV1|TPAGE, C2, XY2, UV2,
+ * C3, XY3, UV3. A replaced line is re-cut to the full 256 at the long line's
+ * left margin, in screen and texture space together, so the centred English is
+ * not clipped to the width of the Japanese sentence it replaced. */
+#define MCARD_LINE_X (-132)
+
+static void mcard_widen(uint32_t p)
+{
+    psx_mod_write_half(p +  8u, (uint16_t)(int16_t)MCARD_LINE_X);         /* XY0.x */
+    psx_mod_write_half(p + 32u, (uint16_t)(int16_t)MCARD_LINE_X);         /* XY2.x */
+    psx_mod_write_half(p + 20u, (uint16_t)(int16_t)(MCARD_LINE_X + 255)); /* XY1.x */
+    psx_mod_write_half(p + 44u, (uint16_t)(int16_t)(MCARD_LINE_X + 255)); /* XY3.x */
+    psx_mod_write_byte(p + 12u, 0u);                                      /* UV0.u */
+    psx_mod_write_byte(p + 36u, 0u);                                      /* UV2.u */
+    psx_mod_write_byte(p + 24u, 255u);                                    /* UV1.u */
+    psx_mod_write_byte(p + 48u, 255u);                                    /* UV3.u */
+}
+
+static void mcard_tick(void)
+{
+    uint32_t ctx = psx_mod_read_word(MENU_PADPTR);
+    if (!ctx) return;
+    uint32_t cur = psx_mod_read_word(ctx + PRIM_PTR_OFF);
+    uint32_t s0  = psx_mod_read_word(PRIM_STARTS);
+    uint32_t s1  = psx_mod_read_word(PRIM_STARTS + 4u);
+    if (!in_ram(cur) || !in_ram(s0) || !in_ram(s1)) return;
+    uint32_t p = (cur >= s1 && s1 > s0) ? s1 : ((cur >= s0) ? s0 : 0u);
+    if (!p) return;
+
+    uint16_t pal[16];
+    int ink = 0, paper = 0;
+    mcard_palette(pal, &ink, &paper);
+    if (ink == paper) return;
+
+    for (int guard = 0; p < cur && guard < 4096; guard++) {
+        uint32_t len = psx_mod_read_byte(p + 3u);
+        if (len == 0u) break;
+        uint32_t end = p + (len + 1u) * 4u;
+        uint32_t cmd = psx_mod_read_byte(p + 7u);
+        if (len >= 3u && (cmd & 0x04u) && cmd >= 0x20u && cmd < 0x60u &&
+            psx_mod_read_half(p + 14u) == MCARD_CLUT &&
+            psx_mod_read_half(p + 26u) == MCARD_TPAGE) {
+
+            int band  = psx_mod_read_byte(p + 13u) / 16;      /* v -> band */
+            int x0    = (int16_t)psx_mod_read_half(p + 8u);
+            int width = (int16_t)psx_mod_read_half(p + 20u) - x0;
+
+            if (band >= 0 && band < 3 && width > 0 && width <= 256) {
+                uint32_t h    = mcard_vram_hash(band, width, pal);
+                int      ours = -1;
+
+                {   /* PSX_MCHASH=1: what the runtime actually computes, so the
+                     * table can be compared against it instead of guessed at. */
+                    static int  show = -1;
+                    static uint32_t seen[16];
+                    static int  seen_n;
+                    if (show < 0) { const char *e = getenv("PSX_MCHASH"); show = (e && *e && *e != '0'); }
+                    if (show) {
+                        int dup = 0;
+                        for (int k = 0; k < seen_n; k++) if (seen[k] == h) dup = 1;
+                        if (!dup && seen_n < 16) {
+                            seen[seen_n++] = h;
+                            fprintf(stderr, "ddr: banda %d  largura %3d  hash 0x%08X"
+                                            "  (tinta=%d papel=%d)\n",
+                                    band, width, h, ink, paper);
+                            fflush(stderr);
+                        }
+                    }
+                }
+
+                for (int i = 0; i < MCARD_MSG_COUNT; i++)
+                    if (mcard_msgs[i].width == width && mcard_msgs[i].hash == h) {
+                        mcard_upload_band(band, mcard_msgs[i].band, ink, paper);
+                        ours = i;
+                        fprintf(stderr, "ddr: memory-card line %d replaced (w=%d)\n",
+                                band, width);
+                        fflush(stderr);
+                        break;
+                    }
+
+                /* Already replaced on an earlier frame? Then the band matches
+                 * one of our own pictures across the full 256. */
+                if (ours < 0) {
+                    uint32_t full = mcard_vram_hash(band, MCARD_BAND_W, pal);
+                    for (int i = 0; i < MCARD_MSG_COUNT; i++)
+                        if (full == mcard_bits_hash(mcard_msgs[i].band)) { ours = i; break; }
+                }
+
+                /* Widen ONLY what we own, and only where the entry asks for it:
+                 * a scaled strip keeps the geometry the game gave it. */
+                if (ours >= 0 && mcard_msgs[ours].widen) mcard_widen(p);
+                (void)x0;
+            }
+        }
+        p = end;
+    }
+}
+
+/* ── Message-page watch (PSX_MCWATCH=1) ─────────────────────────────────────
+ *
+ * The page at VRAM 320,256 is the game's message board: the memory-card check
+ * lives there, and so do the save/load notices, each overwriting the last. A
+ * strip-layout trigger only sees the ones that happen to be on screen when the
+ * probe runs; watching the PIXELS catches every message that passes through,
+ * however briefly, because the page is rewritten for each one.
+ *
+ * Hashes the top 48 rows every frame and writes a PPM whenever the hash moves,
+ * logging the strips being drawn at that moment so the layout of each message
+ * is recorded next to its picture.
+ */
+#define MC_PAGE_X 320
+#define MC_PAGE_Y 256
+#define MC_ROWS   64
+
+static void mc_watch(void)
+{
+    static int      enabled = -1;
+    static uint32_t last_hash;
+    static int      seq;
+
+    if (enabled < 0) { const char *e = getenv("PSX_MCWATCH"); enabled = (e && *e && *e != '0'); }
+    if (!enabled || seq >= 24) return;
+
+    uint32_t h = 2166136261u;
+    for (int y = 0; y < MC_ROWS; y++)
+        for (int x = 0; x < 64; x++)
+            h = (h ^ gpu_vram_peek(MC_PAGE_X + x, MC_PAGE_Y + y)) * 16777619u;
+    if (h == last_hash) return;
+    last_hash = h;
+
+    int cx = (int)(MCARD_CLUT & 0x3Fu) * 16;
+    int cy = (int)((MCARD_CLUT >> 6) & 0x1FFu);
+    char path[64];
+    snprintf(path, sizeof path, "mc_%02d.ppm", seq);
+    FILE *f = fopen(path, "wb");
+    if (f) {
+        fprintf(f, "P6\n256 %d\n255\n", MC_ROWS);
+        for (int y = 0; y < MC_ROWS; y++) {
+            for (int u = 0; u < 256; u++) {
+                uint16_t hw  = gpu_vram_peek(MC_PAGE_X + u / 4, MC_PAGE_Y + y);
+                uint8_t  idx = (uint8_t)((hw >> ((u & 3) * 4)) & 0x0Fu);
+                uint16_t c   = gpu_vram_peek(cx + idx, cy);
+                unsigned char rgb[3];
+                rgb[0] = (unsigned char)(((c      ) & 0x1Fu) << 3);
+                rgb[1] = (unsigned char)(((c >>  5) & 0x1Fu) << 3);
+                rgb[2] = (unsigned char)(((c >> 10) & 0x1Fu) << 3);
+                fwrite(rgb, 1, 3, f);
+            }
+        }
+        fclose(f);
+    }
+
+    fprintf(stderr, "ddr: mc_%02d.ppm gravado\n", seq);
+    fflush(stderr);
+    seq++;
+}
+
 static void on_ot_merge(CPUState *cpu, uint32_t addr)
 {
     (void)cpu; (void)addr;
@@ -1296,6 +1701,8 @@ static void on_ot_merge(CPUState *cpu, uint32_t addr)
     prim_dump();
     tim_scan();
     tex_dump();
+    mc_watch();
+    if (s_feat_warning) { warning_tick(); mcard_tick(); }
 
     if (s_feat_bga_dark) {
         bga_flush();                 /* the last call of the frame */
@@ -1333,6 +1740,7 @@ PSX_MOD_CONSTRUCTOR(ddr_register_hooks)
     (void)psx_mod_register_activation_plugin("ddr.framerate.sixty", ddr_activate_fps60);
     (void)psx_mod_register_activation_plugin("ddr.widescreen.wide", ddr_activate_widescreen);
     (void)psx_mod_register_activation_plugin("ddr.menu.backdrop",   ddr_activate_menu_bd);
+    (void)psx_mod_register_activation_plugin("ddr.warning.english", ddr_activate_warning);
 
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_SCREEN, on_menu_screen);
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_DRAW,   on_menu_draw);

@@ -1,0 +1,39 @@
+format_version = 5
+id = "ddr.warning"
+version = "1.0.0"
+name = "Translated Screens"
+author = "ddr-1st-recomp"
+description = "The health-and-safety screen the game opens with, and every memory-card message, are Japanese pictures rather than text a translator could reach. This uploads redrawn versions into video memory in their place, at the original size and with the original two palette colours."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLPM-86222"
+
+[[feature]]
+id = "translate"
+name = "Translate the Japanese screens"
+description = "Disabled by default. Each picture is replaced in video memory the frame its screen appears, through the same CPU-to-VRAM transfer the game itself uses, so nothing is patched and no image file travels with the game. A message we have not catalogued simply stays Japanese instead of being replaced by the wrong line."
+group = "Localization"
+default_enabled = false
+
+[[plugin]]
+feature = "translate"
+id = "ddr.warning.english"
+
+[[option]]
+feature = "translate"
+id = "language"
+label = "Language"
+description = "Which artwork to upload. Both cover the CAUTION screen and all eight memory-card messages."
+group = "Localization"
+type = "choice"
+default = "english"
+
+[[option.choice]]
+value = "english"
+label = "English"
+
+[[option.choice]]
+value = "portuguese"
+label = "Português (Brasil)"

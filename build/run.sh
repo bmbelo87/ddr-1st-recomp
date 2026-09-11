@@ -24,6 +24,8 @@
 #   CHAIN=1 ./run.sh         -> checa a lista de blocos do modelo (repeticao)
 #   NOGUARD=1 ./run.sh       -> desliga a guarda do ponteiro de animacao
 #   NODEDUP=1 ./run.sh       -> desliga a supressao do desenho duplicado
+#   MCHASH=1 ./run.sh        -> imprime os hashes das linhas de mensagem
+#   MCWATCH=1 ./run.sh       -> grava a pagina de mensagens a cada mudanca
 #   TEXDUMP=1 ./run.sh       -> grava as texturas da VRAM que a tela usa
 #   TIMDUMP=1 ./run.sh       -> procura imagens TIM na RAM e grava .ppm
 #   PRIMDUMP=1 ./run.sh      -> lista as primitivas grandes do quadro
@@ -58,6 +60,8 @@ export PSX_CHAIN=1                # detecta E suprime o desenho duplicado
 [ -n "${TEXTTEST:-}" ] && export PSX_MENU_TEXT_TEST=1
 [ -n "${HDRTEST:-}" ] && { export PSX_MENU_TEXT_TEST=1 PSX_MENU_EXIT_X=-68 PSX_MENU_EXIT_Y=32; }
 [ -n "${UNLOCK:-}" ] && export PSX_UNLOCK="$UNLOCK"
+[ -n "${MCHASH:-}" ] && export PSX_MCHASH=1
+[ -n "${MCWATCH:-}" ] && export PSX_MCWATCH=1
 [ -n "${TEXDUMP:-}" ] && export PSX_TEXDUMP=1
 [ -n "${TIMDUMP:-}" ] && export PSX_TIMDUMP=1
 [ -n "${PRIMDUMP:-}" ] && export PSX_PRIMDUMP="$PRIMDUMP"
