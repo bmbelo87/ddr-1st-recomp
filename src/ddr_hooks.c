@@ -208,6 +208,16 @@ static void ddr_activate_bga_dark(void) { s_feat_bga_dark  = 1; }
 static int      s_feat_fps60;
 static void ddr_activate_fps60(void)    { s_feat_fps60     = 1; }
 
+/* Widescreen is the framework's, not ours: the activation callback runs before
+ * the renderer exists, which is the one moment a fixed aspect can be chosen.
+ * The GTE squash plus the stretched present widens the field of view of the 3D
+ * stage; [widescreen] hud_sprt_squash / auto_ui_squash in game.toml put the 2D
+ * back at its own proportions so the arrows stay round. */
+static void ddr_activate_widescreen(void)
+{
+    (void)psx_mod_set_fixed_display_aspect(16u, 9u);
+}
+
 /* One declared option, as an integer, with the manifest default as fallback. */
 static int option_int_pkg(const char *pkg, const char *feature,
                           const char *opt, int fallback)
@@ -867,6 +877,7 @@ PSX_MOD_CONSTRUCTOR(ddr_register_hooks)
     (void)psx_mod_register_activation_plugin("ddr.background.dim", ddr_activate_dim_bg);
     (void)psx_mod_register_activation_plugin("ddr.bga.dark",       ddr_activate_bga_dark);
     (void)psx_mod_register_activation_plugin("ddr.framerate.sixty", ddr_activate_fps60);
+    (void)psx_mod_register_activation_plugin("ddr.widescreen.wide", ddr_activate_widescreen);
 
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_SCREEN, on_menu_screen);
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_DRAW,   on_menu_draw);

@@ -1,0 +1,22 @@
+format_version = 5
+id = "ddr.widescreen"
+version = "1.0.0"
+name = "Widescreen 16:9"
+author = "ddr-1st-recomp"
+description = "Opens the 3D stage to 16:9 instead of cropping or stretching it. The projection is squashed horizontally and the frame presented wide, which is more field of view rather than a zoomed picture; the arrows, the life bar and the text are corrected back to their own proportions."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLPM-86222"
+
+[[feature]]
+id = "wide"
+name = "Play in 16:9"
+description = "Disabled by default, so the game runs at its native 4:3, which is mathematically identical to the original. The aspect is chosen before the window is created, so this takes effect from the boot screen and cannot be switched mid-session."
+group = "Visual"
+default_enabled = false
+
+[[plugin]]
+feature = "wide"
+id = "ddr.widescreen.wide"

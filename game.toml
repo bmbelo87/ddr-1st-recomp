@@ -88,6 +88,39 @@ strict  = false
 # Raise toward 80-100 only if audio crackles.
 buffer_ms = 60
 
+[video]
+# Identidade: 4:3 e byte a byte a apresentacao original. O mod "Widescreen"
+# pede 16:9 na ativacao (psx_mod_set_fixed_display_aspect), antes do renderer
+# subir, entao quem nao liga nada continua vendo o jogo como ele e.
+aspect_ratio = "4:3"
+
+# Correcao de proporcao por primitiva. Sem isto, a esticada do widescreen
+# alarga tambem as setas, a lifebar e o texto; com isto, o que e 2D volta a
+# proporcao propria e so o mundo 3D ganha campo de visao. Nenhuma das duas
+# mexe no codigo gerado -- o runtime le as duas na inicializacao, entao nao
+# exigem um generate novo.
+[widescreen]
+hud_sprt_squash = true
+auto_ui_squash  = true
+
+# Sem um detector de "isto e gameplay", TODO quadro e classificado como tela 2D
+# (menu/save/FMV) e recebe a politica de pillarbox 4:3 -- que e exatamente a
+# barra preta dos lados. O detector generico para titulo 3D conta vertices
+# projetados pela GTE no quadro: a cena da musica projeta muitos, uma tela
+# puramente 2D projeta nenhum. Com isto a gameplay entra em widescreen e os
+# menus seguem 4:3.
+gte_game_mode = true
+
+# E nao basta: quase tudo no DDR e 2D, entao havia quadros de menu e de musica
+# sem projecao 3D suficiente que voltavam a ser pillarboxados. full_2d trata
+# todo quadro em jogo como gameplay, que e o comportamento correto para um
+# titulo assim -- foi o que o teste com PSX_WS_FORCE_2D confirmou.
+full_2d = true
+
+# Limpa as margens sinteticas que o modo native-wide revela, para que o que
+# aparece nas laterais seja preto limpo e nao lixo do quadro anterior.
+clear_reveal = true
+
 [runtime]
 window_title = "Dance Dance Revolution 1st Mix"
 
