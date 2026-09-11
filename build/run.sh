@@ -32,6 +32,8 @@
 #   PRIMDUMP=2 ./run.sh      -> lista TODAS, com uv/clut/tpage (achar imagens)
 #   WS2D=1 ./run.sh          -> trata todo quadro como gameplay (teste do widescreen)
 #   VSYNC=1 ./run.sh         -> forca 1 campo de espera (tentativa de 60 fps)
+#   VRAMFULL=300 ./run.sh    -> mapa da VRAM a cada N quadros (ate 12 arquivos)
+#   VRAMDUMP='896,0,256,40,3D20,320,256,64' ./run.sh  -> extrai regiao da VRAM
 #   PTRFIND=0x800921D4 ./run.sh  -> acha ponteiros para essa estrutura
 #   PEEK=0x80092180:64 ./run.sh  -> despeja essa regiao de memoria
 #   HUNT=1 ./run.sh          -> caca os contadores de julgamento na RAM
@@ -79,6 +81,8 @@ export PSX_CHAIN=1                # detecta E suprime o desenho duplicado
 [ -n "${PRIMDUMP:-}" ] && export PSX_PRIMDUMP="$PRIMDUMP"
 [ -n "${WS2D:-}"   ] && export PSX_WS_FORCE_2D=1
 [ -n "${VSYNC:-}"  ] && export PSX_VSYNC="$VSYNC"
+[ -n "${VRAMFULL:-}" ] && export PSX_VRAMFULL="$VRAMFULL"
+[ -n "${VRAMDUMP:-}" ] && export PSX_VRAMDUMP="$VRAMDUMP"
 [ -n "${PTRFIND:-}" ] && export PSX_PTRFIND="$PTRFIND"
 [ -n "${PEEK:-}"   ] && export PSX_PEEK="$PEEK"
 [ -n "${HUNT:-}"   ] && export PSX_HUNT=1

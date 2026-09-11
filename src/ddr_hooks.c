@@ -1955,6 +1955,145 @@ static void judge_tick(void)
     }
 }
 
+/* ── Whole-VRAM snapshot (PSX_VRAMFULL=<frames>) ───────────────────────────
+ *
+ * A map, not a rip: 1024x512 halfwords straight out of the frame store, read as
+ * 15-bit colour. Anything stored as 16bpp art shows up as itself; 4bpp and 8bpp
+ * blocks show up as noise, but their POSITION and SIZE are plainly visible,
+ * which is what a search needs. Extract those properly afterwards with
+ * PSX_VRAMDUMP, which decodes with a real palette.
+ *
+ * Deriving a picture's address from the texture page a draw call names is the
+ * alternative, and it is not reliable for rectangles: a rectangle has no page
+ * of its own, and the draw-mode command that sets one precedes it in the
+ * ORDERING TABLE, not in the primitive buffer this probe walks. Reading VRAM
+ * by coordinates sidesteps the question entirely.
+ */
+static void vram_full_tick(void)
+{
+    static int      init, seq;
+    static uint32_t every, frame;
+
+    if (!init) {
+        init = 1;
+        const char *e = getenv("PSX_VRAMFULL");
+        every = (e && *e) ? (uint32_t)strtoul(e, NULL, 0) : 0u;
+    }
+    /* Periodic, not a single instant: a screen that lasts twenty seconds before
+     * timing out cannot be caught by a frame number chosen in advance. Snapshots
+     * are numbered, so a session can be walked through and sorted out later. */
+    if (!every || seq >= 12) return;
+    if (++frame % every) return;
+
+    char path[32];
+    snprintf(path, sizeof path, "vram_full_%02d.ppm", seq);
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fprintf(f, "P6\n1024 512\n255\n");
+    for (int y = 0; y < 512; y++)
+        for (int x = 0; x < 1024; x++) {
+            uint16_t c = gpu_vram_peek(x, y);
+            unsigned char rgb[3];
+            rgb[0] = (unsigned char)(((c      ) & 0x1Fu) << 3);
+            rgb[1] = (unsigned char)(((c >>  5) & 0x1Fu) << 3);
+            rgb[2] = (unsigned char)(((c >> 10) & 0x1Fu) << 3);
+            fwrite(rgb, 1, 3, f);
+        }
+    fclose(f);
+    fprintf(stderr, "ddr: %s gravado no quadro %u\n", path, (unsigned)frame);
+    fflush(stderr);
+    seq++;
+}
+
+/* ── VRAM region dump (PSX_VRAMDUMP="x,y,w,h,clut[,x2,y2,w2]") ──────────────
+ *
+ * The texture probe keys on the page a draw call names, which is enough when a
+ * picture sits in one page. The menu's message band does not: it is 320 texels
+ * wide, a 4bpp page holds 256, so the game splits it across two pages -- and
+ * the larger half is uploaded OVER the font sheet, so a dump taken at boot
+ * shows the font instead of the message.
+ *
+ * This reads a rectangle straight out of VRAM by coordinates, decoded with a
+ * palette given by hand, and can stitch a second rectangle onto its right edge
+ * so a split image comes out whole.
+ */
+static void vram_dump_tick(void)
+{
+    static int init, done;
+    static int x0, y0, w0, h0, x1, y1, w1;
+    static uint32_t clut;
+    static uint32_t frame;
+
+    if (!init) {
+        init = 1;
+        const char *e = getenv("PSX_VRAMDUMP");
+        if (!e || !*e) { done = 1; return; }
+        unsigned a=0,b=0,c=0,d=0,cl=0,a2=0,b2=0,c2=0;
+        int n = sscanf(e, "%u,%u,%u,%u,%x,%u,%u,%u", &a,&b,&c,&d,&cl,&a2,&b2,&c2);
+        if (n < 5) { done = 1; return; }
+        x0=(int)a; y0=(int)b; w0=(int)c; h0=(int)d; clut=cl;
+        if (n >= 8) { x1=(int)a2; y1=(int)b2; w1=(int)c2; }
+    }
+    /* Wait for the picture to be ON SCREEN rather than for a number of frames.
+     * The page is reused between screens and the menu returns to the attract
+     * loop after a few idle seconds, so any fixed delay is a guess. A primitive
+     * naming the requested palette IS the picture being drawn -- that is the
+     * moment to read VRAM. */
+    if (done) return;
+    frame++;
+    {
+        uint32_t ctx = psx_mod_read_word(MENU_PADPTR);
+        if (!ctx) return;
+        uint32_t cur = psx_mod_read_word(ctx + PRIM_PTR_OFF);
+        uint32_t s0a = psx_mod_read_word(PRIM_STARTS);
+        uint32_t s1a = psx_mod_read_word(PRIM_STARTS + 4u);
+        if (!in_ram(cur) || !in_ram(s0a) || !in_ram(s1a)) return;
+        uint32_t q = (cur >= s1a && s1a > s0a) ? s1a : ((cur >= s0a) ? s0a : 0u);
+        if (!q) return;
+        int seen = 0;
+        for (int guard = 0; q < cur && guard < 4096; guard++) {
+            uint32_t len = psx_mod_read_byte(q + 3u);
+            if (len == 0u) break;
+            uint32_t cmd = psx_mod_read_byte(q + 7u);
+            if (len >= 3u && (cmd & 0x04u) && psx_mod_read_half(q + 14u) == (uint16_t)clut) {
+                seen = 1; break;
+            }
+            q += (len + 1u) * 4u;
+        }
+        if (!seen) return;
+    }
+    done = 1;
+
+    int cx = (int)(clut & 0x3Fu) * 16;
+    int cy = (int)((clut >> 6) & 0x1FFu);
+    int w  = w0 + w1;
+
+    char path[64];
+    snprintf(path, sizeof path, "vram_%d_%d.ppm", x0, y0);
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fprintf(f, "P6\n%d %d\n255\n", w, h0);
+    for (int y = 0; y < h0; y++) {
+        for (int u = 0; u < w; u++) {
+            int sx = (u < w0) ? (x0 + u / 4) : (x1 + (u - w0) / 4);
+            int sy = (u < w0) ? (y0 + y)     : (y1 + y);
+            int nib = (u < w0) ? (u & 3)     : ((u - w0) & 3);
+            uint16_t hw  = gpu_vram_peek(sx, sy);
+            uint8_t  idx = (uint8_t)((hw >> (nib * 4)) & 0x0Fu);
+            uint16_t c   = gpu_vram_peek(cx + idx, cy);
+            unsigned char rgb[3];
+            rgb[0] = (unsigned char)(((c      ) & 0x1Fu) << 3);
+            rgb[1] = (unsigned char)(((c >>  5) & 0x1Fu) << 3);
+            rgb[2] = (unsigned char)(((c >> 10) & 0x1Fu) << 3);
+            fwrite(rgb, 1, 3, f);
+        }
+    }
+    fclose(f);
+    fprintf(stderr, "ddr: %s gravado no quadro %u (%dx%d, paleta em %d,%d)\n",
+            path, (unsigned)frame, w, h0, cx, cy);
+    fflush(stderr);
+}
+
 static void on_ot_merge(CPUState *cpu, uint32_t addr)
 {
     (void)cpu; (void)addr;
@@ -1967,6 +2106,8 @@ static void on_ot_merge(CPUState *cpu, uint32_t addr)
     fps_tick(1);
     hunt_tick();
     ptr_peek_tick();
+    vram_dump_tick();
+    vram_full_tick();
     vsync_force();
     prim_dump();
     tim_scan();
