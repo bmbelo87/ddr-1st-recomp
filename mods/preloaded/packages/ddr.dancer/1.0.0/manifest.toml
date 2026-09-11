@@ -1,0 +1,22 @@
+format_version = 5
+id = "ddr.dancer"
+version = "1.0.0"
+name = "Background Dancer"
+author = "ddr-1st-recomp"
+description = "The 3D dancer behind the arrows. Turning it off leaves the chart, the arrows and the backgrounds untouched -- only the model stops being drawn."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLPM-86222"
+
+[[feature]]
+id = "hide"
+name = "Hide the 3D dancer"
+description = "Disabled by default, so the dancer is shown. Enable it for a plainer, cheaper screen -- the model is the most expensive thing this game draws, so a slow machine gains the most. This does not patch the game: the emitter is handed an empty object list and simply draws nothing that frame, so nothing else about the scene changes."
+group = "Visual"
+default_enabled = false
+
+[[plugin]]
+feature = "hide"
+id = "ddr.dancer.hide"

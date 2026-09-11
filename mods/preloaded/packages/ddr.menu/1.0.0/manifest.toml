@@ -1,0 +1,72 @@
+format_version = 5
+id = "ddr.menu"
+version = "1.0.0"
+name = "Mode Select"
+author = "ddr-1st-recomp"
+description = "The mode-select screen: the two entries Konami left on the disc but disconnected, an EXIT GAME item, and the option of drawing every line with the font instead of the disc's sprites."
+resolver = "declarative"
+save_compatibility = "shared"
+
+# Addresses are specific to this disc.
+[[target]]
+game_id = "SLPM-86222"
+
+# ── Extended menu ───────────────────────────────────────────────────────────
+[[feature]]
+id = "extended"
+name = "Extended mode select"
+description = "Enabled by default. EDIT and INFORMATION ship on the disc complete -- their own sprite, id and record -- but were left out of the navigation ring, so nothing reaches them. Linking them costs four bytes each. EXIT GAME is genuinely new: the item table ends where a function-pointer table begins, so it is drawn as text and navigated by the mod rather than added to the table."
+group = "Interface"
+default_enabled = true
+
+[[plugin]]
+feature = "extended"
+id = "ddr.menu.extended"
+
+# ── Text mode ───────────────────────────────────────────────────────────────
+[[feature]]
+id = "text"
+name = "Text menu"
+description = "Enabled by default. Draws every item with the game's generic font instead of the prebaked sprites in VRAM. Uniform with EXIT GAME, which has no sprite and never could -- and it makes menu items text, so renaming or reordering them stops needing artwork. Turn this off to see Konami's original lettering."
+group = "Interface"
+default_enabled = true
+
+[[plugin]]
+feature = "text"
+id = "ddr.menu.text"
+
+[[option]]
+feature = "text"
+id = "sel_red"
+label = "Selected item: red"
+description = "The selected line is tinted rather than drawn in another font. Each glyph carries an R,G,B the hardware multiplies with the texture, so 128 is neutral: below darkens that channel, above brightens it. Raising red and lowering the rest pushes the font's yellow towards orange and red."
+group = "Interface"
+type = "integer"
+min = 0
+max = 255
+step = 5
+default = 255
+
+[[option]]
+feature = "text"
+id = "sel_green"
+label = "Selected item: green"
+description = "128 is neutral -- 130 is the nearest step above it. See the red option."
+group = "Interface"
+type = "integer"
+min = 0
+max = 255
+step = 5
+default = 95
+
+[[option]]
+feature = "text"
+id = "sel_blue"
+label = "Selected item: blue"
+description = "128 is neutral. Lowering this is what dims the font's blue outline."
+group = "Interface"
+type = "integer"
+min = 0
+max = 255
+step = 5
+default = 95

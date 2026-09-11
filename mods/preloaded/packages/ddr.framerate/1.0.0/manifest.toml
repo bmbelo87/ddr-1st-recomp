@@ -1,0 +1,22 @@
+format_version = 5
+id = "ddr.framerate"
+version = "1.0.0"
+name = "60 FPS Gameplay"
+author = "ddr-1st-recomp"
+description = "The gameplay screen ships capped at 30 frames per second: its frame loop asks VSync for two fields instead of one. This asks for one, so the arrows, the stage and the dancer all run at the full 60 the rest of the game already runs at."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLPM-86222"
+
+[[feature]]
+id = "sixty"
+name = "Run gameplay at 60 FPS"
+description = "Disabled by default. The cap is a single byte the game writes when a song screen opens; this holds it at the 60 Hz value every frame. Timing is not affected -- the chart follows the music, not the frame count -- and nothing in the game's code is patched."
+group = "Visual"
+default_enabled = false
+
+[[plugin]]
+feature = "sixty"
+id = "ddr.framerate.sixty"

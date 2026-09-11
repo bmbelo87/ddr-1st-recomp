@@ -1,0 +1,22 @@
+format_version = 5
+id = "ddr.unlocks"
+version = "1.0.0"
+name = "Unlocks"
+author = "ddr-1st-recomp"
+description = "The hidden modes and songs, without the play counts. Disabled by default -- earning them is the point for most players, and this is here for the ones in a hurry."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLPM-86222"
+
+[[feature]]
+id = "all"
+name = "Unlock everything"
+description = "Disabled by default. The ladder is computed in memory, not read from the disc: a save block holds a table of play counters, and the game sums it and lights bits in a mask -- 10 plays, 100, 500 for EDIT, and 500/600/700 on a second sum for the hidden songs. This lights every bit. It only ever SETS bits, exactly as the game's own routines do, so it coexists with real progress; and it does not touch the play counters, so nothing is written to your memory card. Turn it off and your genuine unlocks are untouched."
+group = "Progress"
+default_enabled = false
+
+[[plugin]]
+feature = "all"
+id = "ddr.unlocks.all"

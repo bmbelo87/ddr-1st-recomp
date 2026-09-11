@@ -1,0 +1,34 @@
+format_version = 5
+id = "ddr.bga"
+version = "1.0.0"
+name = "BGA Dark"
+author = "ddr-1st-recomp"
+description = "Dims the 3D scene drawn behind the chart during a song -- the dancer and every other stage object -- without touching the interface. Brightness 0 leaves a solid black stage, which is the classic BGA-off look."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLPM-86222"
+
+[[feature]]
+id = "dark"
+name = "Darken the stage"
+description = "Disabled by default. Everything the 3D emitter draws is scaled; the life bar, the judge, the combo, the score, the arrows and the sequence zone come from other routines and keep their colours. The objects still cover the fixed background, so the screen goes dark rather than opening a hole in the scene."
+group = "Visual"
+default_enabled = false
+
+[[plugin]]
+feature = "dark"
+id = "ddr.bga.dark"
+
+[[option]]
+feature = "dark"
+id = "brightness"
+label = "Stage brightness"
+description = "100 is the stock scene; 0 is fully black. Values in between keep the silhouettes readable."
+group = "Visual"
+type = "integer"
+min = 0
+max = 100
+step = 5
+default = 50

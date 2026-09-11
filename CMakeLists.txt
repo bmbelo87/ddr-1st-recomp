@@ -47,6 +47,7 @@ set(DDR_HOOKS "${CMAKE_CURRENT_SOURCE_DIR}/src/ddr_hooks.c")
 
 psxrecomp_add_runtime_target(ddr-1st-recomp
     EXTRAS_SOURCES            ${DDR_HOOKS}
+    PRELOADED_MODS_DIR        "${CMAKE_CURRENT_SOURCE_DIR}/mods/preloaded"
     GAME_GENERATED_FULL_C     ${GAME_FULL}
     GAME_GENERATED_DISPATCH_C "${GAME_DISPATCH}"
     WINDOW_TITLE              "Dance Dance Revolution 1st Mix Recompiled"

@@ -71,11 +71,11 @@ exec psxrecomp/tools/package_setup_host.sh \
   --exe-name         Dance_Dance_Revolution_1st_Mix_Recompiled \
   --display-name     "Dance Dance Revolution 1st Mix Recompiled" \
   --disc-hint        "your legally owned Dance Dance Revolution (Japan) disc, SLPM-86222" \
-  --no-mods \
   --project-file     game.toml \
   --project-file     catalog_identity.json \
   --project-file     CMakeLists.txt \
   --project-file     VERSION \
   --project-file     README.md \
   --project-dir      src \
+  --project-dir      mods \
   --project-dir      recompiler
