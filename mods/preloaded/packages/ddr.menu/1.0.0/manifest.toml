@@ -70,3 +70,26 @@ min = 0
 max = 255
 step = 5
 default = 95
+
+[[feature]]
+id = "backdrop"
+name = "Dark menu backdrop"
+description = "The mode-select screen lays a full-screen semi-transparent rectangle over the scene. It does not paint white: its blend mode is ADD, so it adds grey to everything behind it, and that is the wash. This switches that one rectangle to the hardware's subtract mode, so the same primitive takes light away instead of adding it. Disabled by default."
+group = "Visual"
+default_enabled = false
+
+[[plugin]]
+feature = "backdrop"
+id = "ddr.menu.backdrop"
+
+[[option]]
+feature = "backdrop"
+id = "level"
+label = "How black"
+description = "A percentage. 0 leaves the scene as the game draws it, 100 takes the backdrop all the way to black. In between, the scene stays readable underneath the menu."
+group = "Visual"
+type = "integer"
+min = 0
+max = 100
+step = 5
+default = 100

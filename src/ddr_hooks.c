@@ -205,6 +205,8 @@ static void ddr_activate_no_dancer(void){ s_feat_no_dancer = 1; }
 static void ddr_activate_dim_bg(void)   { s_feat_dim_bg    = 1; }
 static int      s_feat_bga_dark;
 static void ddr_activate_bga_dark(void) { s_feat_bga_dark  = 1; }
+static int      s_feat_menu_bd;
+static void ddr_activate_menu_bd(void)  { s_feat_menu_bd   = 1; }
 static int      s_feat_fps60;
 static void ddr_activate_fps60(void)    { s_feat_fps60     = 1; }
 
@@ -836,6 +838,109 @@ static void vsync_force(void)
     }
 }
 
+/* ── Menu backdrop ──────────────────────────────────────────────────────────
+ *
+ * The mode-select screen lays a full-screen untextured rectangle over the
+ * scene: 320x240 from the corner, colour 160,160,160, command 0x62 -- the
+ * 0x02 bit is semi-transparency. Measured on screen, its blend mode is ADD:
+ * it adds grey to everything behind it, which is the wash. Re-colouring it
+ * therefore cannot darken anything -- black is the neutral element of an
+ * addition, so 0 simply makes it vanish.
+ *
+ * The mode that does darken is SUBTRACT (back - front), and the mode is not a
+ * property of the primitive: it lives in the draw-mode command (0xE1) that
+ * preceded it. That command is in the same buffer, so the fix is a surgical
+ * edit of the display list:
+ *
+ *   the rectangle's packet  ->  becomes a 1-word 0xE1 (the same texpage the
+ *                               game set, with the blend bits switched to
+ *                               subtract), chained to
+ *   scratch: the rectangle   -> the original rect, re-coloured to the level
+ *   scratch: restore 0xE1    -> the game's own draw-mode word, put back so
+ *                               everything drawn after is untouched
+ *   -> the packet's original next
+ *
+ * Nothing is inserted ahead of the rectangle, so its predecessor never has to
+ * be found: the packet is rewritten in place and the rest is chained behind
+ * it. The buffer is rebuilt from scratch every frame, so none of this
+ * accumulates.
+ */
+#define MENU_BD_CMD   0x62u
+#define MENU_BD_W_LO  300
+#define MENU_BD_W_HI  340
+#define MENU_BD_H_LO  220
+#define MENU_BD_H_HI  260
+#define E1_MODE_MASK  0x00000060u   /* bits 5-6: 0 = B/2+F/2, 1 = B+F, 2 = B-F */
+#define E1_MODE_SUB   0x00000040u
+
+static uint32_t bd_scratch(void)
+{
+    static uint32_t base;
+    if (!base) base = MENU_STR_ADDR + 0x300u;   /* past the label slots and the dedup struct */
+    return base;
+}
+
+static uint32_t prim_tag(uint32_t next, uint32_t words)
+{
+    return ((next & 0x00FFFFFFu) | (words << 24));
+}
+
+static void menu_backdrop(int percent)
+{
+    if (percent <= 0) return;
+    if (percent > 100) percent = 100;
+    uint32_t level = (uint32_t)percent * 255u / 100u;
+
+    uint32_t ctx = psx_mod_read_word(MENU_PADPTR);
+    if (!ctx) return;
+    uint32_t cur = psx_mod_read_word(ctx + PRIM_PTR_OFF);
+    uint32_t s0  = psx_mod_read_word(PRIM_STARTS);
+    uint32_t s1  = psx_mod_read_word(PRIM_STARTS + 4u);
+    if (!in_ram(cur) || !in_ram(s0) || !in_ram(s1)) return;
+    uint32_t p = (cur >= s1 && s1 > s0) ? s1 : ((cur >= s0) ? s0 : 0u);
+    if (!p) return;
+
+    uint32_t last_e1 = 0u;      /* the draw-mode word in force when the rect is reached */
+
+    for (int guard = 0; p < cur && guard < 4096; guard++) {
+        uint32_t len = psx_mod_read_byte(p + 3u);
+        if (len == 0u) break;
+        uint32_t end  = p + (len + 1u) * 4u;
+        uint32_t word = psx_mod_read_word(p + 4u);
+
+        if (len == 1u && (word >> 24) == 0xE1u) { last_e1 = word; p = end; continue; }
+
+        if (len >= 3u && (word >> 24) == MENU_BD_CMD && p + 16u <= end) {
+            int w = (uint16_t)psx_mod_read_half(p + 12u);
+            int h = (uint16_t)psx_mod_read_half(p + 14u);
+            if (w >= MENU_BD_W_LO && w <= MENU_BD_W_HI &&
+                h >= MENU_BD_H_LO && h <= MENU_BD_H_HI && last_e1) {
+                uint32_t nxt = psx_mod_read_word(p) & 0x00FFFFFFu;
+                uint32_t xy  = psx_mod_read_word(p + 8u);
+                uint32_t wh  = psx_mod_read_word(p + 12u);
+                uint32_t sc  = bd_scratch();
+
+                /* the rectangle, re-coloured, in scratch */
+                psx_mod_write_word(sc,        prim_tag(sc + 0x20u, 3u));
+                psx_mod_write_word(sc + 4u,   (MENU_BD_CMD << 24) |
+                                              (level << 16) | (level << 8) | level);
+                psx_mod_write_word(sc + 8u,   xy);
+                psx_mod_write_word(sc + 12u,  wh);
+
+                /* put the game's own draw mode back */
+                psx_mod_write_word(sc + 0x20u, prim_tag(nxt, 1u));
+                psx_mod_write_word(sc + 0x24u, last_e1);
+
+                /* the packet in place becomes the subtract draw-mode command */
+                psx_mod_write_word(p,        prim_tag(sc, 1u));
+                psx_mod_write_word(p + 4u,   (last_e1 & ~E1_MODE_MASK) | E1_MODE_SUB);
+                return;                      /* one backdrop per frame */
+            }
+        }
+        p = end;
+    }
+}
+
 static void on_ot_merge(CPUState *cpu, uint32_t addr)
 {
     (void)cpu; (void)addr;
@@ -856,6 +961,11 @@ static void on_ot_merge(CPUState *cpu, uint32_t addr)
 
     if (s_feat_dim_bg)
         dim_background(option_int_pkg("ddr.background", "dim", "brightness", 50));
+
+    /* Last: it rewrites a packet's length, so the linear walkers above must
+     * have finished with the buffer before this runs. */
+    if (s_feat_menu_bd)
+        menu_backdrop(option_int_pkg("ddr.menu", "backdrop", "level", 100));
 
     if (!s_feat_unlocks || !s_menu_linked) return;
     uint32_t cur = psx_mod_read_word(UNLOCK_MASK_ADDR);
@@ -878,6 +988,7 @@ PSX_MOD_CONSTRUCTOR(ddr_register_hooks)
     (void)psx_mod_register_activation_plugin("ddr.bga.dark",       ddr_activate_bga_dark);
     (void)psx_mod_register_activation_plugin("ddr.framerate.sixty", ddr_activate_fps60);
     (void)psx_mod_register_activation_plugin("ddr.widescreen.wide", ddr_activate_widescreen);
+    (void)psx_mod_register_activation_plugin("ddr.menu.backdrop",   ddr_activate_menu_bd);
 
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_SCREEN, on_menu_screen);
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_DRAW,   on_menu_draw);
