@@ -22,6 +22,7 @@
 #include "cpu_state.h"
 #include "warning_art.h"
 #include "mcard_art.h"
+#include "band_art.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -2094,6 +2095,76 @@ static void vram_dump_tick(void)
     fflush(stderr);
 }
 
+/* ── Main-menu safety band ──────────────────────────────────────────────────
+ *
+ * A 320x40 picture at VRAM (320,256), 4bpp, palette (512,244): dark green
+ * ground, white text. Being 320 wide it crosses a texture-page boundary, which
+ * is why the game draws it as two rectangles -- but in VRAM it is contiguous,
+ * so one transfer replaces it.
+ *
+ * The same page carries the memory-card messages, so the trigger is the
+ * picture itself: the region is hashed (a texel counts as ink when it differs
+ * from the top-left one, which is background by construction) and the
+ * replacement fires only on the Japanese band's exact hash. Anything else --
+ * another message, our own English already in place -- is left alone.
+ */
+static uint32_t band_hash(int bg_idx, const uint16_t *pal)
+{
+    uint32_t h = 2166136261u;
+    for (int y = 0; y < BAND_H; y++)
+        for (int x = 0; x < BAND_W; x++) {
+            uint16_t hw  = gpu_vram_peek(BAND_X + x / 4, BAND_Y + y);
+            int      idx = (int)((hw >> ((x & 3) * 4)) & 0x0Fu);
+            int      ink = (pal[idx] & 0x7FFFu) != (pal[bg_idx] & 0x7FFFu);
+            h = (h ^ (uint32_t)ink) * 16777619u;
+        }
+    return h;
+}
+
+static void band_tick(void)
+{
+    if (!s_feat_warning) return;
+
+    int cx = (int)(BAND_CLUT & 0x3Fu) * 16;
+    int cy = (int)((BAND_CLUT >> 6) & 0x1FFu);
+    uint16_t pal[16];
+    int ink = 0, best = -1;
+    for (int i = 0; i < 16; i++) {
+        pal[i] = gpu_vram_peek(cx + i, cy);
+        int lum = (int)((pal[i] & 0x1Fu) + ((pal[i] >> 5) & 0x1Fu) + ((pal[i] >> 10) & 0x1Fu));
+        if (lum > best) { best = lum; ink = i; }
+    }
+    /* A corner of the band is background, so its index is the ground. */
+    int bg = (int)(gpu_vram_peek(BAND_X, BAND_Y) & 0x0Fu);
+    if (ink == bg) return;
+    if (band_hash(bg, pal) != BAND_JP_HASH) return;
+
+    const unsigned char *art = lang_is_pt() ? band_bits_pt : band_bits_en;
+
+    gpu_write_gp0(0xA0000000u);
+    gpu_write_gp0(((uint32_t)BAND_Y << 16) | (uint32_t)BAND_X);
+    gpu_write_gp0(((uint32_t)BAND_H << 16) | (uint32_t)(BAND_W / 4));   /* halfwords */
+
+    for (int y = 0; y < BAND_H; y++) {
+        const unsigned char *row = art + (size_t)y * (BAND_W / 8);
+        for (int hw = 0; hw < BAND_W / 4; hw += 2) {
+            uint32_t word = 0u;
+            for (int k = 0; k < 2; k++) {
+                uint32_t half = 0u;
+                for (int t = 0; t < 4; t++) {
+                    int x   = (hw + k) * 4 + t;
+                    int set = (row[x >> 3] >> (7 - (x & 7))) & 1;
+                    half |= (uint32_t)(set ? ink : bg) << (t * 4);
+                }
+                word |= half << (k * 16);
+            }
+            gpu_write_gp0(word);
+        }
+    }
+    fprintf(stderr, "ddr: menu safety band replaced\n");
+    fflush(stderr);
+}
+
 static void on_ot_merge(CPUState *cpu, uint32_t addr)
 {
     (void)cpu; (void)addr;
@@ -2114,7 +2185,7 @@ static void on_ot_merge(CPUState *cpu, uint32_t addr)
     tex_dump();
     mc_watch();
     judge_tick();
-    if (s_feat_warning) { warning_tick(); mcard_tick(); }
+    if (s_feat_warning) { warning_tick(); mcard_tick(); band_tick(); }
 
     if (s_feat_bga_dark) {
         bga_flush();                 /* the last call of the frame */
