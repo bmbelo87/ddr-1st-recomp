@@ -992,7 +992,21 @@ static void prim_dump(void)
                 /* Textured quad: tag, C0, XY0, UV0|CLUT, C1, XY1, UV1|TPAGE, ...
                  * so the page lives in the upper half of word 6. A rect has no
                  * page of its own -- it uses whatever E1 last set. */
-                uint32_t tpage = (cmd >= 0x60u) ? page_now : psx_mod_read_half(p + 26u);
+                /* The page rides on the second vertex's UV word, and where
+                 * that word sits depends on shading: a gouraud polygon
+                 * carries a colour per vertex, a flat one a single colour for
+                 * all of them, which puts the word four bytes earlier. Bit 4
+                 * of the command says which. Reading the gouraud offset from
+                 * a flat polygon lands on a vertex coordinate, and a
+                 * coordinate can pass for a plausible page -- the menu's
+                 * copyright line reported 006E, which is simply its bottom
+                 * edge, and sent me looking for it in the font sheet.
+                 *
+                 * A rectangle has no page of its own and takes whatever the
+                 * last draw-mode command set. */
+                uint32_t tpage = (cmd >= 0x60u)
+                                     ? page_now
+                                     : psx_mod_read_half(p + ((cmd & 0x10u) ? 26u : 22u));
                 snprintf(tex, sizeof tex, " uv=%02X,%02X clut=%04X tpage=%04X",
                          uvclut & 0xFFu, (uvclut >> 8) & 0xFFu,
                          (uvclut >> 16) & 0xFFFFu, tpage);
