@@ -1,0 +1,22 @@
+format_version = 5
+id = "ddr.autoplay"
+version = "1.0.0"
+name = "Autoplay"
+author = "ddr-1st-recomp"
+description = "The game dances for you. Every step is hit exactly on time, so a song plays itself to a full PERFECT combo while you watch -- useful for seeing a chart you cannot clear, for recording, or for leaving the game running."
+resolver = "declarative"
+save_compatibility = "shared"
+
+[[target]]
+game_id = "SLPM-86222"
+
+[[feature]]
+id = "perfect"
+name = "Play every step perfectly"
+description = "Disabled by default. The game does not compare your steps against the pad -- it subtracts two numbers, the instant a step is due and the instant it was stepped on, and reads the difference. This waits until a step comes due and writes its own instant into the other field, so the difference is zero and the game awards its own PERFECT, scores it and builds the combo through code that is not patched anywhere. Your pad still works: anything you step on yourself is simply judged first."
+group = "Gameplay"
+default_enabled = false
+
+[[plugin]]
+feature = "perfect"
+id = "ddr.autoplay.perfect"

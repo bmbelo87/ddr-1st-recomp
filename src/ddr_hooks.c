@@ -212,6 +212,8 @@ static int      s_feat_bga_dark;
 static void ddr_activate_bga_dark(void) { s_feat_bga_dark  = 1; }
 static int      s_feat_judge;
 static void ddr_activate_judge(void)    { s_feat_judge     = 1; }
+static int      s_feat_autoplay;
+static void ddr_activate_autoplay(void) { s_feat_autoplay  = 1; }
 static int      s_feat_warning;
 static void ddr_activate_warning(void)  { s_feat_warning   = 1; }
 
@@ -2431,6 +2433,374 @@ static void desc_tick(void)
     fflush(stderr);
 }
 
+/* -- Change watch (PSX_WATCH="addr[:bytes],addr[:bytes],...") ---------------
+ *
+ * A peek that repeats every few seconds drowns a long session: the interesting
+ * moment is when a value CHANGES, and everything either side of it is noise.
+ * This prints a region only when its contents differ from the last time it was
+ * read, with the frame number, so a session reads as a list of events --
+ * boot, menu, demo, play -- and a variable that separates two of them stands
+ * out by having changed exactly there.
+ *
+ * Up to eight regions, 64 bytes each.
+ */
+#define WATCH_MAX 8
+#define WATCH_BYTES 64
+
+static void watch_tick(void)
+{
+    static int      init, n;
+    static uint32_t addr[WATCH_MAX], len[WATCH_MAX], frame;
+    static uint8_t  prev[WATCH_MAX][WATCH_BYTES];
+    static int      have[WATCH_MAX];
+
+    if (!init) {
+        init = 1;
+        const char *e = getenv("PSX_WATCH");
+        while (e && *e && n < WATCH_MAX) {
+            char *end;
+            uint32_t a = (uint32_t)strtoul(e, &end, 16);
+            if (end == e) break;
+            uint32_t l = 4u;
+            if (*end == ':') l = (uint32_t)strtoul(end + 1, &end, 0);
+            if (l < 1u) l = 1u;
+            if (l > WATCH_BYTES) l = WATCH_BYTES;
+            addr[n] = a; len[n] = l; n++;
+            while (*end && *end != ',') end++;
+            e = (*end == ',') ? end + 1 : end;
+        }
+        if (n) fprintf(stderr, "ddr: watch de %d regiao(oes)\n", n);
+    }
+    if (!n) return;
+    frame++;
+
+    for (int i = 0; i < n; i++) {
+        uint8_t cur[WATCH_BYTES];
+        for (uint32_t k = 0; k < len[i]; k++)
+            cur[k] = psx_mod_read_byte(addr[i] + k);
+        if (have[i] && !memcmp(cur, prev[i], len[i])) continue;
+        have[i] = 1;
+        memcpy(prev[i], cur, len[i]);
+
+        char line[3 * WATCH_BYTES + 1];
+        int  o = 0;
+        for (uint32_t k = 0; k < len[i]; k++)
+            o += snprintf(line + o, sizeof line - (size_t)o, "%02X ", cur[k]);
+        fprintf(stderr, "ddr: watch %08X q%-6u %s\n",
+                (unsigned)addr[i], (unsigned)frame, line);
+    }
+    fflush(stderr);
+}
+
+/* -- Poke (PSX_POKE="addr:size=value,addr:size|mask,addr:size&mask") --------
+ *
+ * Holds a value in memory every frame, for testing what a variable MEANS.
+ * Reading the code around a flag narrows it down; writing the flag and
+ * watching the game settles it, and settles it in one run rather than in an
+ * afternoon of disassembly.
+ *
+ * Every frame rather than once, because the game writes its own state
+ * continuously: a single poke is overwritten before it can have an effect.
+ *
+ *   =  assign      |  set these bits      &  keep only these bits
+ *
+ * size is 1, 2 or 4 bytes. Up to eight entries.
+ */
+#define POKE_MAX 8
+
+static void poke_tick(void)
+{
+    static int      init, n;
+    static uint32_t addr[POKE_MAX], size[POKE_MAX], val[POKE_MAX];
+    static char     op[POKE_MAX];
+
+    if (!init) {
+        init = 1;
+        const char *e = getenv("PSX_POKE");
+        while (e && *e && n < POKE_MAX) {
+            char *end;
+            uint32_t a = (uint32_t)strtoul(e, &end, 16);
+            if (end == e) break;
+            uint32_t sz = 1u;
+            if (*end == ':') sz = (uint32_t)strtoul(end + 1, &end, 0);
+            if (sz != 1u && sz != 2u && sz != 4u) sz = 1u;
+            char o = *end;
+            if (o != '=' && o != '|' && o != '&') break;
+            uint32_t v = (uint32_t)strtoul(end + 1, &end, 16);
+            addr[n] = a; size[n] = sz; op[n] = o; val[n] = v; n++;
+            while (*end && *end != ',') end++;
+            e = (*end == ',') ? end + 1 : end;
+        }
+        for (int i = 0; i < n; i++)
+            fprintf(stderr, "ddr: poke %08X:%u %c %X\n",
+                    (unsigned)addr[i], (unsigned)size[i], op[i], (unsigned)val[i]);
+        fflush(stderr);
+    }
+
+    for (int i = 0; i < n; i++) {
+        uint32_t cur = (size[i] == 1u) ? psx_mod_read_byte(addr[i])
+                     : (size[i] == 2u) ? psx_mod_read_half(addr[i])
+                                       : psx_mod_read_word(addr[i]);
+        uint32_t nv = (op[i] == '=') ? val[i]
+                    : (op[i] == '|') ? (cur | val[i])
+                                     : (cur & val[i]);
+        if (nv == cur) continue;
+        if (size[i] == 1u)      psx_mod_write_byte(addr[i], (uint8_t)nv);
+        else if (size[i] == 2u) psx_mod_write_half(addr[i], (uint16_t)nv);
+        else                    psx_mod_write_word(addr[i], nv);
+    }
+}
+
+/* -- Pad-struct watch (PSX_PADWATCH=1) --------------------------------------
+ *
+ * MENU_PADPTR is a pointer to the input struct the menu code reads (new-press
+ * mask at +84, one 16-byte slot per pad). Whether GAMEPLAY consults the same
+ * struct -- real controller input during a song -- or a different one
+ * entirely is exactly the open question for autoplay: the demo screen shows
+ * a live "GAME OVER" round with auto inputs, and if those inputs are visible
+ * here too, they are readable (and forgeable) the same way as a real
+ * controller's.
+ *
+ * This dumps a 64-byte window around the new-press field, for both players,
+ * whenever it changes -- during a real song with a controller in hand, to
+ * confirm the struct is the right one at all, and during the demo, to see
+ * whether the same bytes move on their own.
+ */
+static void pad_watch_tick(void)
+{
+    static int     enabled = -1;
+    static uint8_t prev[64];
+    static int     have;
+    static uint32_t frame;
+
+    if (enabled < 0) { const char *e = getenv("PSX_PADWATCH"); enabled = (e && *e && *e != '0'); }
+    if (!enabled) return;
+    frame++;
+
+    uint32_t ctx = psx_mod_read_word(MENU_PADPTR);
+    if (!in_ram(ctx)) return;
+    uint32_t base = ctx + MENU_PAD_OFF - 16u;   /* a little before +84, to catch a held mask if it sits just ahead */
+
+    uint8_t cur[64];
+    for (uint32_t k = 0; k < 64u; k++) cur[k] = psx_mod_read_byte(base + k);
+    if (have && !memcmp(cur, prev, sizeof cur)) return;
+    have = 1;
+    memcpy(prev, cur, sizeof cur);
+
+    char line[3 * 64 + 1];
+    int  o = 0;
+    for (uint32_t k = 0; k < 64u; k++)
+        o += snprintf(line + o, sizeof line - (size_t)o, "%02X ", cur[k]);
+    fprintf(stderr, "ddr: padwatch ctx=%08X q%-6u %s\n", (unsigned)ctx, (unsigned)frame, line);
+    fflush(stderr);
+}
+
+/* -- GAME OVER screen watch (PSX_GOWATCH=1) ---------------------------------
+ *
+ * The attract loop's "GAME OVER" text is literal ASCII, not artwork, drawn by
+ * a state handler picked from a jump table keyed on the half-word at
+ * 0x8008CCE0 -- the same "current screen" field the menu band/hint bar/desc
+ * hooks already read two bytes over. State 0x14 is that handler: the text
+ * blinks because its draw is gated on bit 3 of the frame counter, and a song
+ * plays behind it while some auto-driven simulation racks up combo.
+ *
+ * Rather than hand-disassembling that simulation, this watches the whole
+ * globals region the other known counters and flags live in (0x80080000..
+ * 0x80094000) for the entire time the screen shows 0x14, and reports every
+ * word that changes. It costs nothing outside that screen -- the scan only
+ * runs while the state matches.
+ */
+#define GOWATCH_LO 0x80080000u
+#define GOWATCH_HI 0x80094000u
+#define GOSTATE_ADDR 0x8008CCE0u
+#define GOSTATE_VALUE 0x14u
+
+static void gowatch_tick(void)
+{
+    static int       enabled = -1;
+    static uint32_t *shadow;
+    static int        active, have_shadow;
+    static uint32_t   frame, enter_frame;
+
+    if (enabled < 0) { const char *e = getenv("PSX_GOWATCH"); enabled = (e && *e && *e != '0'); }
+    if (!enabled) return;
+    frame++;
+
+    uint32_t state = psx_mod_read_half(GOSTATE_ADDR);
+    int now = (state == GOSTATE_VALUE);
+
+    if (now && !active) {
+        active = 1;
+        enter_frame = frame;
+        if (!shadow) shadow = (uint32_t *)malloc((GOWATCH_HI - GOWATCH_LO));
+        have_shadow = 0;
+        fprintf(stderr, "ddr: --- tela GAME OVER (estado %02X) comecou no quadro %u ---\n",
+                (unsigned)state, (unsigned)frame);
+        fflush(stderr);
+    } else if (!now && active) {
+        active = 0;
+        fprintf(stderr, "ddr: --- tela GAME OVER terminou no quadro %u (durou %u quadros) ---\n",
+                (unsigned)frame, (unsigned)(frame - enter_frame));
+        fflush(stderr);
+    }
+    if (!active || !shadow) return;
+
+    uint32_t n = (GOWATCH_HI - GOWATCH_LO) / 4u;
+    if (!have_shadow) {
+        for (uint32_t i = 0; i < n; i++) shadow[i] = psx_mod_read_word(GOWATCH_LO + i * 4u);
+        have_shadow = 1;
+        return;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t cur = psx_mod_read_word(GOWATCH_LO + i * 4u);
+        if (cur == shadow[i]) continue;
+        fprintf(stderr, "ddr: gowatch q%-6u %08X: %08X -> %08X\n",
+                (unsigned)(frame - enter_frame), (unsigned)(GOWATCH_LO + i * 4u),
+                (unsigned)shadow[i], (unsigned)cur);
+        shadow[i] = cur;
+    }
+    fflush(stderr);
+}
+
+
+/* -- Step/judge struct watch (PSX_STEPWATCH=1) ------------------------------
+ *
+ * The judge lives in the function at 0x8005BCCC, which receives the match
+ * state in a0 and the player in a1. The counter hunt pinned that pointer to a
+ * fixed 0x8008F01C: its seven tallies land on 0x800921D4.. and the total on
+ * 0x800921EC summed exactly right (16 PERFECT + 18 GREAT + 15 MISS = 49), so
+ * the base is a static global, not something handed in fresh each song.
+ *
+ * What the disassembly does NOT settle is the byte at +12512. The judge only
+ * ever reads it, masked with 8>>lane, so it is either the pad -- what the
+ * player is standing on -- or the arrows a note demands. That decides how
+ * autoplay is written, so this dumps both mask bytes next to the three
+ * timestamps and lets a single song answer it.
+ *
+ * Per lane, relative to the base:
+ *     +12416  A   a third timestamp (freeze/hold?)
+ *     +12448  P   the press
+ *     +12480  N   the note
+ *     +12512  m   mask byte in question
+ *     +12520  n   second mask
+ *     +12528  f   the flag that gates the lane at 0x8005C548
+ *     +12536  g   a second flag
+ */
+#define STEP_BASE   0x8008F01Cu
+#define STEP_CLOCK  0x8008C4DCu
+#define STEP_A      12416u
+#define STEP_P      12448u
+#define STEP_N      12480u
+#define STEP_M      12512u
+#define STEP_N2     12520u
+#define STEP_F      12528u
+#define STEP_G      12536u
+
+static void step_watch_tick(void)
+{
+    static int      enabled = -1;
+    static uint32_t frame;
+    static uint8_t  prev[4][19];
+    static int      have;
+
+    if (enabled < 0) { const char *e = getenv("PSX_STEPWATCH"); enabled = (e && *e && *e != '0'); }
+    if (!enabled) return;
+    frame++;
+
+    uint8_t cur[4][19];
+    for (uint32_t s = 0; s < 4u; s++) {
+        uint32_t a = psx_mod_read_word(STEP_BASE + STEP_A + s * 4u);
+        uint32_t p = psx_mod_read_word(STEP_BASE + STEP_P + s * 4u);
+        uint32_t n = psx_mod_read_word(STEP_BASE + STEP_N + s * 4u);
+        memcpy(&cur[s][0], &a, 4); memcpy(&cur[s][4], &p, 4); memcpy(&cur[s][8], &n, 4);
+        cur[s][12] = psx_mod_read_byte(STEP_BASE + STEP_M  + s);
+        cur[s][13] = psx_mod_read_byte(STEP_BASE + STEP_N2 + s);
+        cur[s][14] = psx_mod_read_byte(STEP_BASE + STEP_F  + s);
+        cur[s][15] = psx_mod_read_byte(STEP_BASE + STEP_G  + s);
+        cur[s][16] = cur[s][17] = cur[s][18] = 0;
+    }
+    if (have && !memcmp(cur, prev, sizeof cur)) return;
+    memcpy(prev, cur, sizeof cur);
+    have = 1;
+
+    int32_t clk = (int32_t)psx_mod_read_word(STEP_CLOCK);
+    fprintf(stderr, "ddr: step q%-6u clk=%d\n", (unsigned)frame, (int)clk);
+    for (uint32_t s = 0; s < 4u; s++) {
+        int32_t a, p, n;
+        memcpy(&a, &cur[s][0], 4); memcpy(&p, &cur[s][4], 4); memcpy(&n, &cur[s][8], 4);
+        fprintf(stderr, "ddr:   L%u A=%-8d P=%-8d N=%-8d m=%02X n=%02X f=%02X g=%02X\n",
+                (unsigned)s, (int)a, (int)p, (int)n,
+                cur[s][12], cur[s][13], cur[s][14], cur[s][15]);
+    }
+    fflush(stderr);
+}
+
+
+/* -- Autoplay (PSX_AUTOPLAY=1) ----------------------------------------------
+ *
+ * The judge at 0x8005C724 does not compare against the pad at all. It
+ * subtracts two timestamps -- the note's and the press's -- and reads the
+ * difference:
+ *
+ *     0x8005c6cc  subu s0, s6, s3      s0 = note - press
+ *     0x8005c724  s0 in [-2,+2]   -> PERFECT
+ *     0x8005c73c  s0 in [-5,+6]   -> GREAT
+ *
+ * So autoplay needs no synthetic input, no chart parsing and no imitation of
+ * the attract demo (which turned out to judge badly anyway -- two GREATs and
+ * four GOODs, never a PERFECT). It waits until the clock reaches a pending
+ * note, then writes the note's own timestamp into the press field. The
+ * difference is exactly zero and the game awards its own PERFECT, scores it,
+ * and racks the combo, through code that is not patched anywhere.
+ *
+ * The lane dump (PSX_STEPWATCH) is what settled this: pressing with no note on
+ * screen set the press field but left the mask byte at 0, and a jump loaded
+ * mask 03 -- lanes 2 and 3 -- on both of its slots. The mask describes the
+ * note, not the player.
+ *
+ * The flag byte is written too. Once a frame is too coarse to have ever caught
+ * it set, so whether the judge needs it is unproven; writing it costs nothing
+ * and removes the one gate that could silently swallow a lane.
+ */
+static void autoplay_tick(void)
+{
+    static int      env = -1;
+    static uint32_t hits, frame;
+
+    if (env < 0) { const char *e = getenv("PSX_AUTOPLAY"); env = (e && *e && *e != '0'); }
+    if (!env && !s_feat_autoplay) return;
+    frame++;
+
+    int32_t clk = (int32_t)psx_mod_read_word(STEP_CLOCK);
+
+    for (uint32_t p = 0; p < 2u; p++) {
+        for (uint32_t s = 0; s < 4u; s++) {
+            uint32_t na = STEP_BASE + STEP_N + p * 16u + s * 4u;
+            uint32_t pa = STEP_BASE + STEP_P + p * 16u + s * 4u;
+            uint32_t aa = STEP_BASE + STEP_A + p * 16u + s * 4u;
+
+            int32_t n = (int32_t)psx_mod_read_word(na);
+            if (n < 0) continue;                                  /* lane empty */
+            if ((int32_t)psx_mod_read_word(pa) >= 0) continue;     /* already pressed */
+            if (clk < n) continue;                                 /* not due yet */
+
+            psx_mod_write_word(pa, (uint32_t)n);                   /* note - press = 0 */
+            psx_mod_write_word(aa, (uint32_t)n);
+            psx_mod_write_byte(STEP_BASE + STEP_F + p * 4u + s, 1u);
+            hits++;
+        }
+    }
+
+    if (env && hits && !(frame % 300u)) {
+        fprintf(stderr, "ddr: autoplay q%-6u clk=%d  pisadas=%u  perfect=%u great=%u total=%u\n",
+                (unsigned)frame, (int)clk, (unsigned)hits,
+                (unsigned)psx_mod_read_word(STEP_BASE + 12728u),
+                (unsigned)psx_mod_read_word(STEP_BASE + 12732u),
+                (unsigned)psx_mod_read_word(STEP_BASE + 12752u));
+        fflush(stderr);
+    }
+}
+
 static void on_ot_merge(CPUState *cpu, uint32_t addr)
 {
     (void)cpu; (void)addr;
@@ -2454,6 +2824,12 @@ static void on_ot_merge(CPUState *cpu, uint32_t addr)
     if (s_feat_warning) { warning_tick(); mcard_tick(); band_tick(); hintbar_tick(); desc_tick(); }
     hintbar_probe();
     desc_dump();
+    watch_tick();
+    poke_tick();
+    pad_watch_tick();
+    gowatch_tick();
+    step_watch_tick();
+    autoplay_tick();
 
     if (s_feat_bga_dark) {
         bga_flush();                 /* the last call of the frame */
@@ -2494,6 +2870,7 @@ PSX_MOD_CONSTRUCTOR(ddr_register_hooks)
     (void)psx_mod_register_activation_plugin("ddr.warning.english", ddr_activate_warning);
     (void)psx_mod_register_activation_plugin("ddr.timing.offset",   ddr_activate_timing);
     (void)psx_mod_register_activation_plugin("ddr.judge.window",    ddr_activate_judge);
+    (void)psx_mod_register_activation_plugin("ddr.autoplay.perfect", ddr_activate_autoplay);
 
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_SCREEN, on_menu_screen);
     (void)psx_mod_register_function_entry_plugin("ddr.menu",  DDR_MENU_DRAW,   on_menu_draw);
